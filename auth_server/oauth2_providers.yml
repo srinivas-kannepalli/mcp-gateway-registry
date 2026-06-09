@@ -102,10 +102,15 @@ providers:
     scopes: ["openid", "email", "profile"]
     response_type: "code"
     grant_type: "authorization_code"
-    # Claims mapping for user info
-    # Auth0 uses 'nickname' for display name and requires a custom
-    # Rule/Action to add groups to tokens as a namespaced claim
-    username_claim: "nickname"
+    # Claims mapping for user info.
+    # AUTH0_USERNAME_CLAIM selects which ID-token claim becomes the username
+    # used for session storage and DB group lookups.  Defaults to "email"
+    # so the full address (e.g. alice@example.com) is used — this is the
+    # most portable default across Auth0 tenants and enterprise IdP federations
+    # (ADFS, Okta, PingFederate) where "nickname" may only contain the local
+    # part of the address and differs in case from the stored value.
+    # Set AUTH0_USERNAME_CLAIM=nickname to restore the legacy behaviour.
+    username_claim: "${AUTH0_USERNAME_CLAIM:-email}"
     groups_claim: "${AUTH0_GROUPS_CLAIM}"
     email_claim: "email"
     name_claim: "name"
