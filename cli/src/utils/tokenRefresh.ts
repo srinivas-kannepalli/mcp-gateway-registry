@@ -95,6 +95,9 @@ async function auth0DeviceCodeFlow(onMessage?: (msg: string) => void): Promise<T
     await fs.mkdir(mcpDir, {recursive: true, mode: 0o700});
     await fs.writeFile(path.join(mcpDir, "ingress_token"), tokenData.access_token, {encoding: "utf-8", mode: 0o600});
 
+    // Also set in-process env so the next resolveAuth call picks it up immediately via the env var path
+    process.env.MCP_GATEWAY_TOKEN = tokenData.access_token;
+
     return {success: true, message: "Auth0 token obtained and saved successfully"};
   }
 
