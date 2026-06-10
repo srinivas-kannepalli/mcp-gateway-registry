@@ -11,9 +11,42 @@ export interface TokenRefreshResult {
   message: string;
 }
 
+const AUTH0_TOKEN_PATH = path.join(os.homedir(), ".mcp", "auth0_ingress.json");
+
+interface Auth0TokenCache {
+  access_token: string;
+  expires_at: number; // unix seconds
+}
+
+async function readCachedAuth0Token(): Promise<string | undefined> {
+  try {
+    const raw = await fs.readFile(AUTH0_TOKEN_PATH, "utf-8");
+    const cache = JSON.parse(raw) as Auth0TokenCache;
+    // Require at least 60 seconds remaining
+    if (typeof cache.access_token === "string" && cache.expires_at > Date.now() / 1000 + 60) {
+      return cache.access_token;
+    }
+  } catch {
+    // File missing or invalid — proceed to device code
+  }
+  return undefined;
+}
+
+async function saveCachedAuth0Token(accessToken: string, expiresIn: number): Promise<void> {
+  const mcpDir = path.join(os.homedir(), ".mcp");
+  await fs.mkdir(mcpDir, {recursive: true, mode: 0o700});
+  const cache: Auth0TokenCache = {
+    access_token: accessToken,
+    expires_at: Math.floor(Date.now() / 1000) + expiresIn
+  };
+  await fs.writeFile(AUTH0_TOKEN_PATH, JSON.stringify(cache, null, 2), {encoding: "utf-8", mode: 0o600});
+  // Also write plain text for resolveGatewayToken's home dir fallback
+  await fs.writeFile(path.join(mcpDir, "ingress_token"), accessToken, {encoding: "utf-8", mode: 0o600});
+}
+
 /**
  * Perform Auth0 device code flow to obtain a gateway token.
- * Saves the resulting token to .oauth-tokens/ingress.json.
+ * Checks cached token first; only initiates device code if missing or expired.
  * @param onMessage - Optional callback to surface progress messages to the caller
  * @returns Result of the token acquisition
  */
@@ -23,6 +56,13 @@ async function auth0DeviceCodeFlow(onMessage?: (msg: string) => void): Promise<T
 
   if (!domain || !clientId) {
     return {success: false, message: "AUTH0_DOMAIN and AUTH0_CLI_CLIENT_ID are required for Auth0 device code flow"};
+  }
+
+  // Check for a cached, non-expired token before starting a new device code flow
+  const cached = await readCachedAuth0Token();
+  if (cached) {
+    process.env.MCP_GATEWAY_TOKEN = cached;
+    return {success: true, message: "Reusing existing valid Auth0 token"};
   }
 
   // Step 1: initiate device code
@@ -77,7 +117,6 @@ async function auth0DeviceCodeFlow(onMessage?: (msg: string) => void): Promise<T
     }
 
     const tokenData = (await tokenRes.json()) as Record<string, unknown>;
-    process.stderr.write(`[auth0-poll] status=${tokenRes.status} error=${tokenData.error ?? "none"} has_token=${typeof tokenData.access_token === "string"}\n`);
 
     if (tokenData.error === "authorization_pending" || tokenData.error === "slow_down") {
       continue;
@@ -91,12 +130,8 @@ async function auth0DeviceCodeFlow(onMessage?: (msg: string) => void): Promise<T
       return {success: false, message: "No access_token in Auth0 response"};
     }
 
-    // Step 3: save to ~/.mcp/ingress_token (plain text) — matches resolveGatewayToken home dir fallback
-    const mcpDir = path.join(os.homedir(), ".mcp");
-    await fs.mkdir(mcpDir, {recursive: true, mode: 0o700});
-    await fs.writeFile(path.join(mcpDir, "ingress_token"), tokenData.access_token, {encoding: "utf-8", mode: 0o600});
-
-    // Also set in-process env so the next resolveAuth call picks it up immediately via the env var path
+    const expiresIn = typeof tokenData.expires_in === "number" ? tokenData.expires_in : 86400;
+    await saveCachedAuth0Token(tokenData.access_token, expiresIn);
     process.env.MCP_GATEWAY_TOKEN = tokenData.access_token;
 
     return {success: true, message: "Auth0 token obtained and saved successfully"};
