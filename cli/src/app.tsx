@@ -102,7 +102,7 @@ export default function App({options}: AppProps) {
           addMessage("assistant", "No gateway token found. Attempting automatic generation...");
 
           try {
-            const result = await refreshTokens();
+            const result = await refreshTokens(undefined, (msg) => addMessage("assistant", msg));
             if (result.success) {
               addMessage("assistant", "✅ OAuth tokens generated successfully. Authenticating...");
               // Trigger auth reload
@@ -128,7 +128,7 @@ export default function App({options}: AppProps) {
           addMessage("assistant", "OAuth tokens missing or invalid. Attempting automatic generation...");
 
           try {
-            const result = await refreshTokens();
+            const result = await refreshTokens(undefined, (msg) => addMessage("assistant", msg));
             if (result.success) {
               addMessage("assistant", "✅ OAuth tokens generated successfully. Authenticating...");
               // Trigger auth reload
@@ -161,7 +161,7 @@ export default function App({options}: AppProps) {
       // Initialize token status
       const gatewayInspection = authState.context.inspections.find(i => i.label.includes("Gateway"));
       if (gatewayInspection && shouldRefreshToken(gatewayInspection.secondsRemaining)) {
-        refreshTokens()
+        refreshTokens(undefined, (msg) => addMessage("assistant", msg))
           .then((result) => {
             if (result.success) {
               // Silently refresh tokens without showing messages
@@ -258,11 +258,10 @@ export default function App({options}: AppProps) {
         // Auto-refresh when <= 10 seconds remaining
         if (shouldRefreshToken(remaining) && !isRefreshingToken) {
           setIsRefreshingToken(true);
-          refreshTokens()
+          refreshTokens(undefined, (msg) => addMessage("assistant", msg))
             .then((result) => {
               if (result.success) {
                 setLastTokenRefresh(new Date());
-                // Trigger auth reload
                 setAuthAttempt((attempt) => attempt + 1);
                 setInitialised(false);
               }
@@ -336,7 +335,7 @@ export default function App({options}: AppProps) {
 
       if (trimmed === "/refresh-tokens" || trimmed === "/refresh") {
         setBusy(true);
-        refreshTokens()
+        refreshTokens(undefined, (msg) => addMessage("assistant", msg))
           .then((result) => {
             if (result.success) {
               addMessage("assistant", "✅ OAuth tokens refreshed successfully. Reloading authentication...");
