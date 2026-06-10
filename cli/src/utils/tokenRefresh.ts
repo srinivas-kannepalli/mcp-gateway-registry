@@ -2,6 +2,7 @@ import {exec} from "node:child_process";
 import {promises as fs} from "node:fs";
 import {promisify} from "node:util";
 import path from "node:path";
+import os from "node:os";
 
 const execAsync = promisify(exec);
 
@@ -89,25 +90,10 @@ async function auth0DeviceCodeFlow(onMessage?: (msg: string) => void): Promise<T
       return {success: false, message: "No access_token in Auth0 response"};
     }
 
-    // Step 3: save to .oauth-tokens/ingress.json
-    const tokenDir = path.join(process.cwd(), ".oauth-tokens");
-    await fs.mkdir(tokenDir, {recursive: true, mode: 0o700});
-    const expiresAtSec = typeof tokenData.expires_in === "number"
-      ? Math.floor(Date.now() / 1000) + tokenData.expires_in
-      : undefined;
-
-    await fs.writeFile(
-      path.join(tokenDir, "ingress.json"),
-      JSON.stringify({
-        provider: "auth0_device_code",
-        access_token: tokenData.access_token,
-        expires_at: expiresAtSec,
-        token_type: tokenData.token_type ?? "Bearer",
-        client_id: clientId,
-        saved_at: new Date().toISOString()
-      }, null, 2),
-      {encoding: "utf-8", mode: 0o600}
-    );
+    // Step 3: save to ~/.mcp/ingress_token (plain text) — matches resolveGatewayToken home dir fallback
+    const mcpDir = path.join(os.homedir(), ".mcp");
+    await fs.mkdir(mcpDir, {recursive: true, mode: 0o700});
+    await fs.writeFile(path.join(mcpDir, "ingress_token"), tokenData.access_token, {encoding: "utf-8", mode: 0o600});
 
     return {success: true, message: "Auth0 token obtained and saved successfully"};
   }
