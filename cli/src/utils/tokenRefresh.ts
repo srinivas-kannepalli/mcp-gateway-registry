@@ -68,10 +68,16 @@ async function auth0DeviceCodeFlow(onMessage?: (msg: string) => void): Promise<T
   // Step 1: initiate device code
   let deviceRes: Response;
   try {
+    const params = new URLSearchParams({client_id: clientId, scope: "openid profile email"});
+    // Audience is optional — with a registered API audience Auth0 returns a signed JWT
+    // (3-part JWS) whose exp claim can be decoded; without it, returns an encrypted JWE.
+    const audience = process.env.AUTH0_AUDIENCE;
+    if (audience) params.set("audience", audience);
+
     deviceRes = await fetch(`https://${domain}/oauth/device/code`, {
       method: "POST",
       headers: {"content-type": "application/x-www-form-urlencoded"},
-      body: new URLSearchParams({client_id: clientId, scope: "openid profile email"}).toString()
+      body: params.toString()
     });
   } catch (err) {
     return {success: false, message: `Failed to contact Auth0: ${(err as Error).message}`};
