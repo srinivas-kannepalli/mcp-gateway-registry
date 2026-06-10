@@ -77,6 +77,7 @@ async function auth0DeviceCodeFlow(onMessage?: (msg: string) => void): Promise<T
     }
 
     const tokenData = (await tokenRes.json()) as Record<string, unknown>;
+    process.stderr.write(`[auth0-poll] status=${tokenRes.status} error=${tokenData.error ?? "none"} has_token=${typeof tokenData.access_token === "string"}\n`);
 
     if (tokenData.error === "authorization_pending" || tokenData.error === "slow_down") {
       continue;

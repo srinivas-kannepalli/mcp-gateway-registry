@@ -104,9 +104,16 @@ export default function App({options}: AppProps) {
           try {
             const result = await refreshTokens(undefined, (msg) => addMessage("assistant", msg));
             if (result.success) {
+              if (cancelled) return;
               addMessage("assistant", "✅ OAuth tokens generated successfully. Authenticating...");
-              // Trigger auth reload
-              setAuthAttempt((attempt) => attempt + 1);
+              // Re-resolve auth directly — avoids effect re-run cycle which can miss in-memory env updates
+              const refreshedContext = await resolveAuth({
+                tokenFile: options.tokenFile,
+                explicitToken: options.token,
+                cwd: process.cwd()
+              });
+              if (cancelled) return;
+              setAuthState({status: "ready", context: refreshedContext});
             } else {
               setAuthState({status: "error", message: `Token generation failed: ${result.message}`});
             }
@@ -130,9 +137,15 @@ export default function App({options}: AppProps) {
           try {
             const result = await refreshTokens(undefined, (msg) => addMessage("assistant", msg));
             if (result.success) {
+              if (cancelled) return;
               addMessage("assistant", "✅ OAuth tokens generated successfully. Authenticating...");
-              // Trigger auth reload
-              setAuthAttempt((attempt) => attempt + 1);
+              const refreshedContext = await resolveAuth({
+                tokenFile: options.tokenFile,
+                explicitToken: options.token,
+                cwd: process.cwd()
+              });
+              if (cancelled) return;
+              setAuthState({status: "ready", context: refreshedContext});
             } else {
               setAuthState({status: "error", message: `Token generation failed: ${result.message}`});
             }
