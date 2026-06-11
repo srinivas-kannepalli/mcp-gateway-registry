@@ -3135,7 +3135,7 @@ class RegistryClient:
         if limit:
             params["limit"] = limit
 
-        response = self._make_request(method="GET", endpoint="/v0.1/servers", params=params)
+        response = self._make_request(method="GET", endpoint="/api/servers", params=params)
 
         result = AnthropicServerList(**response.json())
         logger.info(f"Retrieved {len(result.servers)} servers via Anthropic API")
@@ -3164,7 +3164,7 @@ class RegistryClient:
         encoded_name = quote(server_name, safe="")
 
         response = self._make_request(
-            method="GET", endpoint=f"/v0.1/servers/{encoded_name}/versions"
+            method="GET", endpoint=f"/api/servers/{encoded_name}/versions"
         )
 
         result = AnthropicServerList(**response.json())
@@ -3197,7 +3197,7 @@ class RegistryClient:
         encoded_version = quote(version, safe="")
 
         response = self._make_request(
-            method="GET", endpoint=f"/v0.1/servers/{encoded_name}/versions/{encoded_version}"
+            method="GET", endpoint=f"/api/servers/{encoded_name}/versions/{encoded_version}"
         )
 
         result = AnthropicServerResponse(**response.json())
