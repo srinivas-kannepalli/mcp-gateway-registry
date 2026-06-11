@@ -114,7 +114,7 @@ def _handle_service_list(
     """Handle service list command."""
     client = _get_registry_client(args.base_url, args.token_file)
 
-    result = client.anthropic_list_servers(limit=1000)
+    result = client.list_services(limit=1000)
     _print_json_response(result.model_dump())
 
 
@@ -213,7 +213,7 @@ def _handle_anthropic_list(
     """Handle Anthropic API list command."""
     client = _get_registry_client(args.base_url, args.token_file)
 
-    result = client.anthropic_list_servers(limit=args.limit if hasattr(args, "limit") else 100)
+    result = client.list_services(limit=args.limit if hasattr(args, "limit") else 100)
     _print_json_response(result.model_dump())
 
 
