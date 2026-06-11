@@ -143,9 +143,14 @@ async function executeServers(context: CommandExecutionContext) {
       const meta = server._meta || server.meta || {};
       const internalMeta = meta['io.mcpgateway/internal'] || {};
 
-      lines.push(`${index + 1}. ${server.name || 'Unknown'}`);
-      lines.push(`   Path: ${internalMeta.path || 'N/A'}`);
-      lines.push(`   Status: ${internalMeta.is_enabled ? 'enabled' : 'disabled'}`);
+      // ServerListResponse uses display_name/path/is_enabled directly
+      const name = server.display_name || server.name || 'Unknown';
+      const path = server.path || internalMeta.path || 'N/A';
+      const enabled = server.is_enabled ?? internalMeta.is_enabled;
+
+      lines.push(`${index + 1}. ${name}`);
+      lines.push(`   Path: ${path}`);
+      lines.push(`   Status: ${enabled ? 'enabled' : 'disabled'}`);
       if (server.description) {
         const desc = server.description.length > 80
           ? server.description.substring(0, 80) + '...'
