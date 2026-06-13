@@ -643,30 +643,30 @@ const ServerCard: React.FC<ServerCardProps> = React.memo(({ server, onToggle, on
               </button>
             )}
 
-            {/* Connect Button */}
+            {/* Setup Button — opens IDE config/mcp.json modal */}
             <button
               onClick={() => setShowConfig(true)}
               className="flex items-center gap-1 px-2 py-1.5 text-xs font-medium text-green-600 dark:text-green-400 hover:bg-green-50 dark:hover:bg-green-700/50 rounded-lg transition-all duration-200 flex-shrink-0 border border-green-200 dark:border-green-700"
-              title="Get connection details and mcp.json configuration"
-              aria-label={`Connect to ${server.name}`}
+              title="Get IDE setup instructions and mcp.json configuration"
+              aria-label={`Setup ${server.name}`}
             >
               <LinkIcon className="h-3.5 w-3.5" />
-              Connect
+              Setup
             </button>
             {hasDownstreamOAuth && (
               <button
                 onClick={handleConnectDownstreamOAuth}
                 className="flex items-center gap-1 px-2 py-1.5 text-xs font-medium text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-700/50 rounded-lg transition-all duration-200 flex-shrink-0 border border-blue-200 dark:border-blue-700"
-                title="Connect downstream OAuth for this server"
-                aria-label={`Connect downstream OAuth for ${server.name}`}
+                title="Authorize your account to access this downstream server"
+                aria-label={`Authorize downstream OAuth for ${server.name}`}
                 disabled={downstreamLoading}
               >
                 <LinkIcon className="h-3.5 w-3.5" />
                 {downstreamLoading
                   ? 'Checking...'
                   : downstreamTokenStatus?.has_token && !downstreamTokenStatus?.is_expired
-                    ? 'Reconnect OAuth'
-                    : 'Connect OAuth'}
+                    ? 'Reauthorize'
+                    : 'Authorize'}
               </button>
             )}
 
