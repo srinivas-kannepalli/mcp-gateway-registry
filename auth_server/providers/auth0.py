@@ -61,12 +61,14 @@ class Auth0Provider(AuthProvider):
                 (e.g., 'https://mcp-gateway/groups'). Defaults to
                 'https://mcp-gateway/groups'.
             username_claim: ID-token claim used as the canonical username for
-                session storage and DB group lookups.  Defaults to ``"email"``
-                so the full address is used — this is the most portable choice
-                across enterprise federations (ADFS/Okta/PingFederate) where
-                ``"nickname"`` may only be the local part and may differ in
-                case.  Override via the ``AUTH0_USERNAME_CLAIM`` environment
-                variable or ``oauth2_providers.yml``.
+                session storage and DB group lookups.  Defaults to
+                ``"nickname"`` to preserve existing behaviour for simple Auth0
+                tenants.  Enterprise federations (ADFS/Okta/PingFederate)
+                should set ``AUTH0_USERNAME_CLAIM=email`` so the full
+                lowercased email address is used — matching the values stored
+                in ``idp_user_groups``.  Override via the
+                ``AUTH0_USERNAME_CLAIM`` environment variable or
+                ``oauth2_providers.yml``.
         """
         self.domain = domain.rstrip("/")
         self.client_id = client_id

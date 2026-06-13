@@ -95,7 +95,11 @@ async function sendAnthropicMessage(request: MessageRequest): Promise<MessageRes
   try {
     const client = getAnthropicClient();
 
-    const response = await (client as any).beta.tools.messages.create({
+    // Use messages.create directly (not the .beta.tools path) so the SDK does not
+    // automatically append the 'anthropic-beta: tools-2024-04-04' header, which
+    // Bedrock (and Portkey→Bedrock) rejects. Tools are GA on Bedrock and current
+    // Anthropic API; only older SDK typings still place them under .beta.
+    const response = await (client.messages.create as any)({
       model: request.model,
       system: request.system,
       messages: request.messages,
@@ -112,7 +116,7 @@ async function sendAnthropicMessage(request: MessageRequest): Promise<MessageRes
 
     return {
       content: response.content || [],
-      stop_reason: response.stop_reason,
+      stop_reason: response.stop_reason ?? undefined,
       usage
     };
   } catch (error: any) {
@@ -131,19 +135,17 @@ async function sendAnthropicMessage(request: MessageRequest): Promise<MessageRes
 }
 
 export function getDefaultProvider(): ModelProvider {
-  // Check if AWS credentials are configured
+  // Portkey and direct Anthropic API key both use the Anthropic provider path
+  if (process.env.PORTKEY_API_KEY || process.env.ANTHROPIC_API_KEY) {
+    return "anthropic";
+  }
+
+  // Use Bedrock if AWS credentials are configured
   const hasAwsCredentials = process.env.AWS_ACCESS_KEY_ID ||
                            process.env.AWS_SECRET_ACCESS_KEY ||
                            process.env.AWS_PROFILE;
-
-  // Use Bedrock by default if AWS credentials are available
   if (hasAwsCredentials) {
     return "bedrock";
-  }
-
-  // Fall back to Anthropic if ANTHROPIC_API_KEY is set
-  if (process.env.ANTHROPIC_API_KEY) {
-    return "anthropic";
   }
 
   // Default to bedrock
