@@ -41,8 +41,8 @@ describe('CloudProviderBanner', () => {
     });
 
     expect(screen.getByText('On-premises')).toBeInTheDocument();
-    expect(screen.getByText('Other / not sure')).toBeInTheDocument();
-    expect(screen.getByText("Don't show this again")).toBeInTheDocument();
+    expect(screen.getByText('Other')).toBeInTheDocument();
+    expect(screen.getByText('Dismiss')).toBeInTheDocument();
   });
 
   test('clicking On-premises sends hint=on_premises and hides banner', async () => {
@@ -67,8 +67,8 @@ describe('CloudProviderBanner', () => {
     mockedAxios.post.mockResolvedValueOnce({ status: 204 });
     render(<CloudProviderBanner />);
 
-    await waitFor(() => screen.getByText('Other / not sure'));
-    fireEvent.click(screen.getByText('Other / not sure'));
+    await waitFor(() => screen.getByText('Other'));
+    fireEvent.click(screen.getByText('Other'));
 
     await waitFor(() =>
       expect(mockedAxios.post).toHaveBeenCalledWith(
@@ -83,8 +83,8 @@ describe('CloudProviderBanner', () => {
     mockedAxios.post.mockResolvedValueOnce({ status: 204 });
     render(<CloudProviderBanner />);
 
-    await waitFor(() => screen.getByText("Don't show this again"));
-    fireEvent.click(screen.getByText("Don't show this again"));
+    await waitFor(() => screen.getByText('Dismiss'));
+    fireEvent.click(screen.getByText('Dismiss'));
 
     await waitFor(() =>
       expect(mockedAxios.post).toHaveBeenCalledWith(

@@ -57,15 +57,15 @@ describe('ServerConfigModal URL generation', () => {
       error: null,
     });
 
-    renderModal();
+    renderModal({ proxy_pass_url: 'http://internal-host:8080/api' });
     const config = getDisplayedConfig();
 
-    // VS Code is the default IDE — config uses "servers" key
-    const serverConfig = config.servers['test-server'];
+    // Cursor is the default IDE — config uses "mcpServers" key
+    const serverConfig = config.mcpServers['test-server'];
     expect(serverConfig.url).toBe('http://localhost/test-server/mcp');
-    // Gateway mode includes auth headers
+    // Gateway mode includes auth headers (X-Authorization)
     expect(serverConfig.headers).toBeDefined();
-    expect(serverConfig.headers.Authorization).toContain('Bearer');
+    expect(serverConfig.headers['X-Authorization']).toContain('Bearer');
   });
 
   test('should use proxy_pass_url in registry-only mode', () => {
@@ -83,7 +83,7 @@ describe('ServerConfigModal URL generation', () => {
     renderModal({ proxy_pass_url: 'http://internal-host:8080/mcp' });
     const config = getDisplayedConfig();
 
-    const serverConfig = config.servers['test-server'];
+    const serverConfig = config.mcpServers['test-server'];
     expect(serverConfig.url).toBe('http://internal-host:8080/mcp');
     // Registry-only mode should NOT include auth headers
     expect(serverConfig.headers).toBeUndefined();
@@ -107,7 +107,7 @@ describe('ServerConfigModal URL generation', () => {
       proxy_pass_url: 'http://internal-host:8080/mcp',
     });
     let config = getDisplayedConfig();
-    let serverConfig = config.servers['test-server'];
+    let serverConfig = config.mcpServers['test-server'];
     expect(serverConfig.url).toBe('https://custom-endpoint.example.com/mcp');
 
     unmount();
@@ -129,7 +129,7 @@ describe('ServerConfigModal URL generation', () => {
       proxy_pass_url: 'http://internal-host:8080/mcp',
     });
     config = getDisplayedConfig();
-    serverConfig = config.servers['test-server'];
+    serverConfig = config.mcpServers['test-server'];
     expect(serverConfig.url).toBe('https://custom-endpoint.example.com/mcp');
   });
 });
