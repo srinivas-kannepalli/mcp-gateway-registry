@@ -1,0 +1,94 @@
+# Dockerfile for the mcpgw-server component.
+# Equivalent to: docker build -f docker/Dockerfile.mcp-server \
+#                --build-arg SERVER_DIR=servers/mcpgw .
+# SERVER_DIR is defaulted here so CI pipelines don't need --build-arg.
+# Build context: repo root.
+#
+# If Dockerfile.mcp-server changes structurally, sync those changes here too.
+
+FROM python:3.14-slim
+
+ENV PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    UV_NO_CACHE=1
+
+# Issue #1122: prefer IPv4 over IPv6 in glibc getaddrinfo. ECS Service Connect
+# populates /etc/hosts with both A (127.255.0.x) and AAAA (2600:f0f0::x)
+# entries; the Fargate task netns has no IPv6 routing, so the default RFC 6724
+# IPv6 preference makes outbound calls (mcpgw to registry, etc.) fail with
+# "Network is unreachable". Compose and EKS are unaffected because their
+# /etc/hosts has no IPv6 dual entries to compare against.
+RUN echo 'precedence ::ffff:0:0/96  100' >> /etc/gai.conf
+
+# Install system dependencies.
+RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-recommends \
+    curl \
+    git \
+    build-essential \
+    netcat-openbsd \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN groupadd -g 1000 appuser && useradd -u 1000 -g appuser appuser
+
+WORKDIR /app
+
+RUN pip install uv==0.11.14
+
+RUN chown appuser:appuser /app
+
+USER appuser
+
+RUN uv venv .venv --python 3.14
+
+# SERVER_DIR defaulted to servers/mcpgw — no --build-arg needed in CI.
+ARG SERVER_DIR=servers/mcpgw
+
+USER root
+
+COPY --chown=appuser:appuser ${SERVER_DIR}/pyproject.toml /app/pyproject.toml
+COPY --chown=appuser:appuser ${SERVER_DIR}/uv.lock        /app/uv.lock
+
+USER appuser
+RUN uv sync --frozen --no-dev
+
+USER root
+COPY --chown=appuser:appuser ${SERVER_DIR}/ /app/
+
+USER appuser
+
+EXPOSE 8000
+
+HEALTHCHECK --interval=500s --timeout=10s --start-period=30s --retries=3 \
+    CMD nc -z localhost ${PORT:-8000} || exit 1
+
+USER root
+
+RUN mkdir -p /var/log/containers/ai-registry && \
+    chown -R appuser:appuser /var/log/containers/ai-registry
+
+RUN echo '#!/bin/bash\n\
+set -e\n\
+\n\
+SERVER_PORT=${PORT:-8000}\n\
+\n\
+if [ ! -z "$REGISTRY_BASE_URL" ]; then\n\
+    echo "REGISTRY_BASE_URL=$REGISTRY_BASE_URL" > /app/.env\n\
+fi\n\
+\n\
+source .venv/bin/activate\n\
+CMD="python server.py --port $SERVER_PORT"\n\
+if [ -n "${OTEL_EXPORTER_OTLP_ENDPOINT}" ] && command -v opentelemetry-instrument >/dev/null 2>&1; then\n\
+    echo "Using OTEL_EXPORTER_OTLP_ENDPOINT at ${OTEL_EXPORTER_OTLP_ENDPOINT}"\n\
+    CMD="opentelemetry-instrument $CMD"\n\
+fi\n\
+exec $CMD' > /entrypoint.sh && \
+    chmod +x /entrypoint.sh && \
+    chown appuser:appuser /entrypoint.sh
+
+ARG BUILD_VERSION="1.0.0"
+ENV BUILD_VERSION=$BUILD_VERSION
+
+USER appuser
+
+ENTRYPOINT ["/entrypoint.sh"]
