@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 
 from motor.motor_asyncio import AsyncIOMotorCollection
 
+from registry.repositories.interfaces import UserServerTokenRepositoryBase
 from registry.schemas.user_server_token_models import UserServerToken, UserServerTokenCreate
 from registry.utils.credential_encryption import _get_fernet
 
@@ -37,7 +38,7 @@ def _decrypt(ciphertext: str | None) -> str | None:
         return None
 
 
-class UserServerTokenRepository:
+class UserServerTokenRepository(UserServerTokenRepositoryBase):
     """Store and retrieve per-user OAuth tokens for downstream MCP servers."""
 
     def __init__(self) -> None:

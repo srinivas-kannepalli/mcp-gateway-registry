@@ -1657,3 +1657,93 @@ class RegistryCardRepositoryBase(ABC):
     async def exists(self) -> bool:
         """Check if Registry Card exists."""
         pass
+
+
+# ---------------------------------------------------------------------------
+# Downstream OAuth repository interfaces
+# ---------------------------------------------------------------------------
+
+class UserServerTokenRepositoryBase(ABC):
+    """Interface for per-user downstream OAuth token storage."""
+
+    @abstractmethod
+    async def upsert(self, token_in: Any) -> None:
+        """Create or replace the token for (username, server_path)."""
+
+    @abstractmethod
+    async def get(self, username: str, server_path: str) -> Any | None:
+        """Return the token record or None."""
+
+    @abstractmethod
+    async def get_access_token(self, username: str, server_path: str) -> str | None:
+        """Return the decrypted access token or None."""
+
+    @abstractmethod
+    async def get_refresh_token(self, username: str, server_path: str) -> str | None:
+        """Return the decrypted refresh token or None."""
+
+    @abstractmethod
+    async def delete(self, username: str, server_path: str) -> bool:
+        """Delete the token. Returns True if deleted."""
+
+    @abstractmethod
+    async def is_expired(self, username: str, server_path: str) -> bool:
+        """Return True if the token is missing or past its expiry."""
+
+
+class ServerOAuthClientRepositoryBase(ABC):
+    """Interface for downstream server OAuth client credential storage."""
+
+    @abstractmethod
+    async def upsert(
+        self,
+        server_path: str,
+        client_id: str,
+        client_secret: str | None,
+        token_endpoint: str,
+        authorization_endpoint: str,
+        scopes_supported: list[str],
+        via_dcr: bool = False,
+        registration_access_token: str | None = None,
+    ) -> None:
+        """Create or replace the OAuth client for a server."""
+
+    @abstractmethod
+    async def get(self, server_path: str) -> Any | None:
+        """Return the client record or None."""
+
+    @abstractmethod
+    async def get_client_secret(self, server_path: str) -> str | None:
+        """Return the decrypted client_secret or None."""
+
+    @abstractmethod
+    async def delete(self, server_path: str) -> bool:
+        """Delete the client record. Returns True if deleted."""
+
+
+class DownstreamConsentRepositoryBase(ABC):
+    """Interface for downstream OAuth user consent storage."""
+
+    @abstractmethod
+    async def record_consent(self, username: str, server_path: str, scopes: list[str]) -> None:
+        """Record that a user consented to the given scopes for a server."""
+
+    @abstractmethod
+    async def has_consent(self, username: str, server_path: str) -> bool:
+        """Return True if the user has previously consented."""
+
+    @abstractmethod
+    async def revoke_consent(self, username: str, server_path: str) -> None:
+        """Delete the consent record."""
+
+
+class DownstreamOAuthStateRepositoryBase(ABC):
+    """Interface for single-use OAuth PKCE/state token storage."""
+
+    @abstractmethod
+    async def save(self, state: str, payload: dict) -> None:
+        """Persist a state entry."""
+
+    @abstractmethod
+    async def consume(self, state: str) -> dict | None:
+        """Atomically retrieve-and-delete the state. Returns None if missing/expired."""

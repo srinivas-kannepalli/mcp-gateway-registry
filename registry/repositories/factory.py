@@ -10,15 +10,19 @@ from .audit_repository import AuditRepositoryBase
 from .interfaces import (
     AgentRepositoryBase,
     BackendSessionRepositoryBase,
+    DownstreamConsentRepositoryBase,
+    DownstreamOAuthStateRepositoryBase,
     FederationConfigRepositoryBase,
     PeerFederationRepositoryBase,
     RegistryCardRepositoryBase,
     ScopeRepositoryBase,
     SearchRepositoryBase,
     SecurityScanRepositoryBase,
+    ServerOAuthClientRepositoryBase,
     ServerRepositoryBase,
     SkillRepositoryBase,
     SkillSecurityScanRepositoryBase,
+    UserServerTokenRepositoryBase,
     VirtualServerRepositoryBase,
 )
 
@@ -39,6 +43,12 @@ _backend_session_repo: BackendSessionRepositoryBase | None = None
 _skill_security_scan_repo: SkillSecurityScanRepositoryBase | None = None
 _registry_card_repo: RegistryCardRepositoryBase | None = None
 _app_log_repo: AppLogRepository | None = None
+
+# Downstream OAuth singletons
+_user_server_token_repo: UserServerTokenRepositoryBase | None = None
+_server_oauth_client_repo: ServerOAuthClientRepositoryBase | None = None
+_downstream_consent_repo: DownstreamConsentRepositoryBase | None = None
+_downstream_oauth_state_repo: DownstreamOAuthStateRepositoryBase | None = None
 
 
 def get_server_repository() -> ServerRepositoryBase:
@@ -388,3 +398,59 @@ def reset_repositories() -> None:
     _skill_security_scan_repo = None
     _registry_card_repo = None
     _app_log_repo = None
+
+
+def get_user_server_token_repository() -> UserServerTokenRepositoryBase:
+    """Get per-user downstream OAuth token repository singleton."""
+    global _user_server_token_repo
+    if _user_server_token_repo is not None:
+        return _user_server_token_repo
+    if settings.storage_backend in MONGODB_BACKENDS:
+        from .documentdb.user_server_token_repository import UserServerTokenRepository
+        _user_server_token_repo = UserServerTokenRepository()
+    else:
+        from .memory.downstream_oauth_repositories import InMemoryUserServerTokenRepository
+        _user_server_token_repo = InMemoryUserServerTokenRepository()
+    return _user_server_token_repo
+
+
+def get_server_oauth_client_repository() -> ServerOAuthClientRepositoryBase:
+    """Get downstream server OAuth client repository singleton."""
+    global _server_oauth_client_repo
+    if _server_oauth_client_repo is not None:
+        return _server_oauth_client_repo
+    if settings.storage_backend in MONGODB_BACKENDS:
+        from .documentdb.server_oauth_client_repository import ServerOAuthClientRepository
+        _server_oauth_client_repo = ServerOAuthClientRepository()
+    else:
+        from .memory.downstream_oauth_repositories import InMemoryServerOAuthClientRepository
+        _server_oauth_client_repo = InMemoryServerOAuthClientRepository()
+    return _server_oauth_client_repo
+
+
+def get_downstream_consent_repository() -> DownstreamConsentRepositoryBase:
+    """Get downstream OAuth consent repository singleton."""
+    global _downstream_consent_repo
+    if _downstream_consent_repo is not None:
+        return _downstream_consent_repo
+    if settings.storage_backend in MONGODB_BACKENDS:
+        from .documentdb.downstream_consent_repository import DownstreamConsentRepository
+        _downstream_consent_repo = DownstreamConsentRepository()
+    else:
+        from .memory.downstream_oauth_repositories import InMemoryDownstreamConsentRepository
+        _downstream_consent_repo = InMemoryDownstreamConsentRepository()
+    return _downstream_consent_repo
+
+
+def get_downstream_oauth_state_repository() -> DownstreamOAuthStateRepositoryBase:
+    """Get downstream OAuth state (PKCE) repository singleton."""
+    global _downstream_oauth_state_repo
+    if _downstream_oauth_state_repo is not None:
+        return _downstream_oauth_state_repo
+    if settings.storage_backend in MONGODB_BACKENDS:
+        from .documentdb.downstream_oauth_state_repository import DownstreamOAuthStateRepository
+        _downstream_oauth_state_repo = DownstreamOAuthStateRepository()
+    else:
+        from .memory.downstream_oauth_repositories import InMemoryDownstreamOAuthStateRepository
+        _downstream_oauth_state_repo = InMemoryDownstreamOAuthStateRepository()
+    return _downstream_oauth_state_repo

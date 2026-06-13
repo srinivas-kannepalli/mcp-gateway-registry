@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import base64
 import hashlib
 import logging
@@ -16,12 +15,13 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 from registry.auth.dependencies import enhanced_auth
-from registry.repositories.documentdb.downstream_consent_repository import DownstreamConsentRepository
-from registry.repositories.documentdb.server_oauth_client_repository import (
-    ServerOAuthClientRepository,
-    _decrypt as _decrypt_client_secret,
+from registry.repositories.factory import (
+    get_downstream_consent_repository,
+    get_downstream_oauth_state_repository,
+    get_server_oauth_client_repository,
+    get_user_server_token_repository,
 )
-from registry.repositories.documentdb.user_server_token_repository import UserServerTokenRepository
+from registry.repositories.documentdb.server_oauth_client_repository import _decrypt as _decrypt_client_secret
 from registry.schemas.user_server_token_models import UserServerTokenCreate, UserServerTokenStatus
 from registry.services.downstream_oauth_service import resolve_client_for_server
 from registry.services.server_service import server_service
@@ -30,13 +30,10 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["downstream-oauth"])
 
-_state_store: dict[str, dict[str, Any]] = {}
-_state_lock = asyncio.Lock()
-_STATE_TTL = timedelta(minutes=10)
-
-_token_repo = UserServerTokenRepository()
-_client_repo = ServerOAuthClientRepository()
-_consent_repo = DownstreamConsentRepository()
+_token_repo = get_user_server_token_repository()
+_client_repo = get_server_oauth_client_repository()
+_consent_repo = get_downstream_consent_repository()
+_state_repo = get_downstream_oauth_state_repository()
 
 
 def _generate_pkce() -> tuple[str, str]:
@@ -58,23 +55,6 @@ def _get_proxy_url(server: dict[str, Any]) -> str:
 def _get_resource_indicator(server: dict[str, Any]) -> str:
     downstream_oauth = server.get("downstream_oauth", {})
     return downstream_oauth.get("resource_indicator") or _get_proxy_url(server)
-
-
-async def _save_state(state: str, payload: dict[str, Any]) -> None:
-    async with _state_lock:
-        _state_store[state] = {**payload, "created_at": datetime.now(UTC)}
-
-
-async def _consume_state(state: str) -> dict[str, Any] | None:
-    """Return and delete the state entry if valid and not expired."""
-    async with _state_lock:
-        entry = _state_store.pop(state, None)
-    if not entry:
-        return None
-    age = datetime.now(UTC) - entry["created_at"].replace(tzinfo=UTC)
-    if age > _STATE_TTL:
-        return None
-    return entry
 
 
 async def _get_server_or_404(path: str) -> dict[str, Any]:
@@ -111,7 +91,7 @@ async def downstream_authorize(
 
     code_verifier, code_challenge = _generate_pkce()
     state = secrets.token_urlsafe(32)
-    await _save_state(
+    await _state_repo.save(
         state,
         {
             "username": username,
@@ -153,7 +133,7 @@ async def downstream_callback(
     if not code or not state:
         raise HTTPException(status_code=400, detail="Missing code or state")
 
-    state_data = await _consume_state(state)
+    state_data = await _state_repo.consume(state)
     if not state_data:
         raise HTTPException(status_code=400, detail="Invalid or expired state")
 

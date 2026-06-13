@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 
 from motor.motor_asyncio import AsyncIOMotorCollection
 
+from registry.repositories.interfaces import ServerOAuthClientRepositoryBase
 from registry.schemas.server_oauth_client_models import ServerOAuthClient
 from registry.utils.credential_encryption import _get_fernet
 
@@ -37,7 +38,7 @@ def _decrypt(ciphertext: str | None) -> str | None:
         return None
 
 
-class ServerOAuthClientRepository:
+class ServerOAuthClientRepository(ServerOAuthClientRepositoryBase):
     """Store and retrieve OAuth client credentials for downstream servers."""
 
     def __init__(self) -> None:

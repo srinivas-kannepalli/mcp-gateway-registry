@@ -30,8 +30,13 @@ def route_client() -> TestClient:
 
 
 @pytest.fixture(autouse=True)
-def clear_state_store() -> None:
-    downstream_oauth_routes._state_store.clear()
+def mock_state_repo(monkeypatch) -> AsyncMock:
+    """Replace the DocumentDB state repo with an in-memory mock for tests."""
+    mock = AsyncMock()
+    mock.save = AsyncMock()
+    mock.consume = AsyncMock(return_value=None)  # default: state not found
+    monkeypatch.setattr(downstream_oauth_routes, "_state_repo", mock)
+    return mock
 
 
 @pytest.fixture
@@ -301,13 +306,13 @@ class TestDownstreamCallback:
         mock_token_repo: AsyncMock,
         mock_client_repo: AsyncMock,
         mock_consent_repo: AsyncMock,
+        mock_state_repo: AsyncMock,
         oauth_server: dict[str, object],
     ) -> None:
-        downstream_oauth_routes._state_store["test-state"] = {
+        mock_state_repo.consume.return_value = {
             "username": "testuser",
             "server_path": "/test-server",
             "code_verifier": "test_verifier",
-            "created_at": datetime.now(UTC),
         }
         mock_server_service.get_server_info.return_value = oauth_server
         mock_client_repo.get.return_value = ServerOAuthClient(

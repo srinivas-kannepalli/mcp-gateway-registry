@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 
 from motor.motor_asyncio import AsyncIOMotorCollection
 
+from registry.repositories.interfaces import DownstreamConsentRepositoryBase
 from .client import get_collection_name, get_documentdb_client
 
 logger = logging.getLogger(__name__)
@@ -14,7 +15,7 @@ logger = logging.getLogger(__name__)
 _COLLECTION = "downstream_oauth_consents"
 
 
-class DownstreamConsentRepository:
+class DownstreamConsentRepository(DownstreamConsentRepositoryBase):
     """Tracks which users have consented to downstream OAuth for each server."""
 
     def __init__(self) -> None:
