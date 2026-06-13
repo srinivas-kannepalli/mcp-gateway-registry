@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 
 from pydantic import BaseModel, Field
 
@@ -24,5 +24,5 @@ class ServerOAuthClient(BaseModel):
     authorization_endpoint: str = Field(..., description="Resolved authorization endpoint URL.")
     scopes_supported: list[str] = Field(default_factory=list)
     via_dcr: bool = Field(default=False, description="True if registered via DCR.")
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
