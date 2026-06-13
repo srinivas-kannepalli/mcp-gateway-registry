@@ -5,6 +5,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from .agent_models import AgentProvider
+from ..core.schemas import DownstreamOAuthConfig
 
 # Fields that callers must not mutate via PUT or PATCH.
 # Server-managed (timestamps, health) or identity anchors.
@@ -146,6 +147,14 @@ class ServerUpdateRequest(BaseModel):
     source_created_at: str | None = None
     source_updated_at: str | None = None
     external_tags: list[str] | None = None
+    downstream_oauth: DownstreamOAuthConfig | None = Field(
+        default=None,
+        description=(
+            "Downstream OAuth configuration. Set downstream_auth_type='oauth2' to enable "
+            "per-user token brokering. Use dcr_enabled=True for RFC 7591 Dynamic Client "
+            "Registration, or supply client_id/client_secret for static credentials."
+        ),
+    )
 
     @field_validator("tags", mode="after")
     @classmethod
@@ -228,6 +237,14 @@ class ServerCardPatch(BaseModel):
     source_created_at: str | None = None
     source_updated_at: str | None = None
     external_tags: list[str] | None = None
+    downstream_oauth: DownstreamOAuthConfig | None = Field(
+        default=None,
+        description=(
+            "Downstream OAuth configuration. Set downstream_auth_type='oauth2' to enable "
+            "per-user token brokering. Use dcr_enabled=True for RFC 7591 Dynamic Client "
+            "Registration, or supply client_id/client_secret for static credentials."
+        ),
+    )
 
     @model_validator(mode="after")
     def _reject_registrant_only(self) -> "ServerCardPatch":

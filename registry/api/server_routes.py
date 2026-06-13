@@ -999,6 +999,13 @@ def _merge_server_update(
         if isinstance(value, str):
             merged[tag_field] = [t.strip() for t in value.split(",") if t.strip()]
 
+    # Deep-merge downstream_oauth so a PATCH that sets only a few sub-fields
+    # (e.g. just client_id) preserves the rest of the existing config.
+    if "downstream_oauth" in incoming and isinstance(incoming["downstream_oauth"], dict):
+        existing_oauth = existing.get("downstream_oauth") or {}
+        if isinstance(existing_oauth, dict):
+            merged["downstream_oauth"] = {**existing_oauth, **incoming["downstream_oauth"]}
+
     merged["updated_at"] = datetime.now(UTC).isoformat()
     return merged
 

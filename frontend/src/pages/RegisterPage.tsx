@@ -91,6 +91,13 @@ interface ServerFormData {
   source_created_at: string;
   source_updated_at: string;
   local_runtime: LocalRuntimeFormData;
+  // Downstream OAuth (auth_scheme === 'oauth2')
+  oauth_dcr_enabled: boolean;
+  oauth_client_id: string;
+  oauth_client_secret: string;
+  oauth_scopes: string;
+  oauth_auth_url: string;
+  oauth_token_url: string;
 }
 
 
@@ -151,6 +158,12 @@ const initialServerForm: ServerFormData = {
   source_created_at: '',
   source_updated_at: '',
   local_runtime: initialLocalRuntime,
+  oauth_dcr_enabled: false,
+  oauth_client_id: '',
+  oauth_client_secret: '',
+  oauth_scopes: '',
+  oauth_auth_url: '',
+  oauth_token_url: '',
 };
 
 
@@ -476,6 +489,16 @@ const RegisterPage: React.FC = () => {
             provider_url: parsed.provider_url || prev.provider_url,
             source_created_at: toDatetimeLocal(parsed.source_created_at) || prev.source_created_at,
             source_updated_at: toDatetimeLocal(parsed.source_updated_at) || prev.source_updated_at,
+            // Pre-populate downstream OAuth fields if the server has them configured.
+            ...(parsed.downstream_oauth?.downstream_auth_type === 'oauth2' ? {
+              auth_scheme: 'oauth2',
+              oauth_dcr_enabled: parsed.downstream_oauth.dcr_enabled ?? false,
+              oauth_client_id: parsed.downstream_oauth.client_id ?? '',
+              oauth_client_secret: '',   // never returned by API — leave blank
+              oauth_scopes: (parsed.downstream_oauth.scopes ?? []).join(' '),
+              oauth_auth_url: parsed.downstream_oauth.auth_url ?? '',
+              oauth_token_url: parsed.downstream_oauth.token_url ?? '',
+            } : {}),
           }));
         } else {
           // Helper to convert ISO timestamp to datetime-local format
@@ -577,6 +600,21 @@ const RegisterPage: React.FC = () => {
           if (serverForm.auth_scheme === 'api_key' && serverForm.auth_header_name) {
             formData.append('auth_header_name', serverForm.auth_header_name);
           }
+        }
+        // Downstream OAuth config — sent as JSON when OAuth 2.0 scheme is selected.
+        if (serverForm.auth_scheme === 'oauth2') {
+          const downstreamOAuth: Record<string, unknown> = {
+            downstream_auth_type: 'oauth2',
+            dcr_enabled: serverForm.oauth_dcr_enabled,
+            scopes: serverForm.oauth_scopes.split(/\s+/).filter(Boolean),
+          };
+          if (!serverForm.oauth_dcr_enabled) {
+            if (serverForm.oauth_client_id) downstreamOAuth.client_id = serverForm.oauth_client_id;
+            if (serverForm.oauth_client_secret) downstreamOAuth.client_secret = serverForm.oauth_client_secret;
+          }
+          if (serverForm.oauth_auth_url) downstreamOAuth.auth_url = serverForm.oauth_auth_url;
+          if (serverForm.oauth_token_url) downstreamOAuth.token_url = serverForm.oauth_token_url;
+          formData.append('downstream_oauth', JSON.stringify(downstreamOAuth));
         }
       }
       formData.append('tags', serverForm.tags);
@@ -1003,10 +1041,11 @@ const RegisterPage: React.FC = () => {
                 <option value="none">None</option>
                 <option value="bearer">Bearer Token</option>
                 <option value="api_key">API Key</option>
+                <option value="oauth2">OAuth 2.0</option>
               </select>
             </div>
 
-            {serverForm.auth_scheme !== 'none' && (
+            {serverForm.auth_scheme !== 'none' && serverForm.auth_scheme !== 'oauth2' && (
               <div>
                 <label className={labelClass}>
                   {serverForm.auth_scheme === 'bearer' ? 'Bearer Token' : 'API Key'} *
@@ -1038,6 +1077,111 @@ const RegisterPage: React.FC = () => {
                   The HTTP header name used to send the API key (default: X-API-Key)
                 </p>
               </div>
+            )}
+
+            {/* OAuth 2.0 sub-fields */}
+            {serverForm.auth_scheme === 'oauth2' && (
+              <>
+                <div className="md:col-span-2">
+                  <p className="text-sm text-gray-500 dark:text-gray-400 -mt-2 mb-3">
+                    The gateway will broker OAuth tokens on behalf of each user. Users must
+                    individually authorise access via a consent popup.
+                  </p>
+                </div>
+
+                {/* DCR toggle — full width */}
+                <div className="md:col-span-2 flex items-start gap-3 p-3 rounded-lg bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-700">
+                  <input
+                    id="oauth-dcr"
+                    type="checkbox"
+                    className="mt-0.5 h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                    checked={serverForm.oauth_dcr_enabled}
+                    onChange={(e) => setServerForm(prev => ({ ...prev, oauth_dcr_enabled: e.target.checked }))}
+                  />
+                  <div>
+                    <label htmlFor="oauth-dcr" className="text-sm font-medium text-gray-900 dark:text-white cursor-pointer">
+                      Enable Dynamic Client Registration (RFC 7591 / DCR)
+                    </label>
+                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                      The gateway auto-registers as an OAuth client with the downstream server's
+                      authorisation server. No client credentials needed. Disable to use a
+                      pre-registered static client_id / client_secret.
+                    </p>
+                  </div>
+                </div>
+
+                {/* Static credentials — only shown when DCR is off */}
+                {!serverForm.oauth_dcr_enabled && (
+                  <>
+                    <div>
+                      <label className={labelClass}>Client ID</label>
+                      <input
+                        type="text"
+                        className={inputClass}
+                        value={serverForm.oauth_client_id}
+                        onChange={(e) => setServerForm(prev => ({ ...prev, oauth_client_id: e.target.value }))}
+                        placeholder="your-client-id"
+                      />
+                    </div>
+                    <div>
+                      <label className={labelClass}>Client Secret</label>
+                      <input
+                        type="password"
+                        className={inputClass}
+                        value={serverForm.oauth_client_secret}
+                        onChange={(e) => setServerForm(prev => ({ ...prev, oauth_client_secret: e.target.value }))}
+                        placeholder="stored securely — leave blank to keep existing"
+                      />
+                      <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                        Stored encrypted at rest. Leave blank when editing to preserve the saved value.
+                      </p>
+                    </div>
+                  </>
+                )}
+
+                {/* Scopes */}
+                <div className="md:col-span-2">
+                  <label className={labelClass}>Scopes (space-separated)</label>
+                  <input
+                    type="text"
+                    className={inputClass}
+                    value={serverForm.oauth_scopes}
+                    onChange={(e) => setServerForm(prev => ({ ...prev, oauth_scopes: e.target.value }))}
+                    placeholder="read write offline_access"
+                  />
+                  <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                    OAuth scopes requested when users authorise. Leave blank to use the server's defaults.
+                  </p>
+                </div>
+
+                {/* Endpoint overrides — collapsed by default conceptually, shown inline */}
+                <div>
+                  <label className={labelClass}>Authorization Endpoint (optional)</label>
+                  <input
+                    type="url"
+                    className={inputClass}
+                    value={serverForm.oauth_auth_url}
+                    onChange={(e) => setServerForm(prev => ({ ...prev, oauth_auth_url: e.target.value }))}
+                    placeholder="https://auth.example.com/oauth/authorize"
+                  />
+                  <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                    Override auto-discovery (RFC 9728 / RFC 8414). Leave blank to discover automatically.
+                  </p>
+                </div>
+                <div>
+                  <label className={labelClass}>Token Endpoint (optional)</label>
+                  <input
+                    type="url"
+                    className={inputClass}
+                    value={serverForm.oauth_token_url}
+                    onChange={(e) => setServerForm(prev => ({ ...prev, oauth_token_url: e.target.value }))}
+                    placeholder="https://auth.example.com/oauth/token"
+                  />
+                  <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                    Override auto-discovery. Leave blank to discover automatically.
+                  </p>
+                </div>
+              </>
             )}
 
             <div className="md:col-span-2 mt-4">
