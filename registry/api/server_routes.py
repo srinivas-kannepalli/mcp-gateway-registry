@@ -2583,7 +2583,7 @@ async def get_service_tools(
     try:
         # Call MCP client to fetch fresh tools using server configuration
         tool_list = await mcp_client_service.get_tools_from_server_with_server_info(
-            proxy_pass_url, server_info
+            proxy_pass_url, server_info, user_context["username"]
         )
 
         if tool_list is None:
@@ -5708,6 +5708,8 @@ async def get_server(
     # absent vs empty.
     if not isinstance(server_info.get("metadata"), dict):
         server_info["metadata"] = {}
+
+    strip_credentials_from_dict(server_info)
 
     return JSONResponse(
         status_code=200,

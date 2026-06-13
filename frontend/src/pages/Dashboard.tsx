@@ -26,7 +26,7 @@ import {
   buildLocalRuntimeJson,
 } from '../utils/localRuntime';
 import LocalRuntimeFormPanel from '../components/LocalRuntimeFormPanel';
-import type { LocalRuntime } from '../types/server';
+import type { DownstreamOAuthConfig, LocalRuntime } from '../types/server';
 import Pagination from '../components/Pagination';
 import DuplicateCheckModal from '../components/DuplicateCheckModal';
 import { useDuplicateCheck } from '../hooks/useDuplicateCheck';
@@ -66,6 +66,7 @@ interface Server {
   deployment?: 'remote' | 'local';
   local_runtime?: LocalRuntime;
   registered_by?: string | null;
+  downstream_oauth?: DownstreamOAuthConfig;
 }
 
 interface Agent {

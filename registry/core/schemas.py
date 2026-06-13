@@ -192,6 +192,49 @@ class LocalRuntime(BaseModel):
         return self
 
 
+
+
+class DownstreamOAuthConfig(BaseModel):
+    """Configuration for downstream OAuth-protected MCP servers."""
+
+    downstream_auth_type: Literal["none", "oauth2"] = Field(
+        default="none",
+        description="Downstream auth type. 'oauth2' enables per-user token brokering.",
+    )
+    dcr_enabled: bool = Field(
+        default=False,
+        description=(
+            "Enable RFC 7591 Dynamic Client Registration against the downstream AS. "
+            "If false, client_id/client_secret are used as static credentials."
+        ),
+    )
+    client_id: str | None = Field(
+        default=None,
+        description="Static OAuth client_id. Used when dcr_enabled=False.",
+    )
+    client_secret_encrypted: str | None = Field(
+        default=None,
+        description="Fernet-encrypted client_secret. Never returned in API responses.",
+    )
+    token_url: str | None = Field(
+        default=None,
+        description="Override for the token endpoint URL. If None, discovered via RFC 9728/8414.",
+    )
+    auth_url: str | None = Field(
+        default=None,
+        description="Override for the authorization endpoint URL. If None, discovered via RFC 9728/8414.",
+    )
+    scopes: list[str] = Field(
+        default_factory=list,
+        description="OAuth scopes to request for downstream access.",
+    )
+    resource_indicator: str | None = Field(
+        default=None,
+        description=(
+            "RFC 8707 resource parameter. Defaults to the server's proxy_pass_url if not set."
+        ),
+    )
+
 class ServerInfo(BaseModel):
     """Server information model."""
 
@@ -357,6 +400,11 @@ class ServerInfo(BaseModel):
             "Records the ORIGINAL registrant only — edits do not update this "
             "field. The general audit log captures who last touched the entry."
         ),
+    )
+    # Downstream OAuth configuration (Vista extension)
+    downstream_oauth: DownstreamOAuthConfig = Field(
+        default_factory=DownstreamOAuthConfig,
+        description="Downstream OAuth configuration for OAuth-protected MCP servers.",
     )
 
     @field_validator("visibility")

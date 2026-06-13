@@ -1,0 +1,254 @@
+"""Downstream OAuth flow endpoints."""
+
+from __future__ import annotations
+
+import asyncio
+import base64
+import hashlib
+import logging
+import secrets
+from datetime import UTC, datetime, timedelta
+from typing import Annotated, Any
+from urllib.parse import urlencode
+
+import httpx
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi.responses import HTMLResponse, RedirectResponse
+
+from registry.auth.dependencies import enhanced_auth
+from registry.repositories.documentdb.downstream_consent_repository import DownstreamConsentRepository
+from registry.repositories.documentdb.server_oauth_client_repository import (
+    ServerOAuthClientRepository,
+    _decrypt as _decrypt_client_secret,
+)
+from registry.repositories.documentdb.user_server_token_repository import UserServerTokenRepository
+from registry.schemas.user_server_token_models import UserServerTokenCreate, UserServerTokenStatus
+from registry.services.downstream_oauth_service import resolve_client_for_server
+from registry.services.server_service import server_service
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter(tags=["downstream-oauth"])
+
+_state_store: dict[str, dict[str, Any]] = {}
+_state_lock = asyncio.Lock()
+_STATE_TTL = timedelta(minutes=10)
+
+_token_repo = UserServerTokenRepository()
+_client_repo = ServerOAuthClientRepository()
+_consent_repo = DownstreamConsentRepository()
+
+
+def _generate_pkce() -> tuple[str, str]:
+    """Return (code_verifier, code_challenge)."""
+    verifier = base64.urlsafe_b64encode(secrets.token_bytes(64)).rstrip(b"=").decode()
+    digest = hashlib.sha256(verifier.encode()).digest()
+    challenge = base64.urlsafe_b64encode(digest).rstrip(b"=").decode()
+    return verifier, challenge
+
+
+def _normalize_path(path: str) -> str:
+    return path if path.startswith("/") else f"/{path}"
+
+
+def _get_proxy_url(server: dict[str, Any]) -> str:
+    return server.get("proxy_pass_url") or server.get("mcp_endpoint") or ""
+
+
+def _get_resource_indicator(server: dict[str, Any]) -> str:
+    downstream_oauth = server.get("downstream_oauth", {})
+    return downstream_oauth.get("resource_indicator") or _get_proxy_url(server)
+
+
+async def _save_state(state: str, payload: dict[str, Any]) -> None:
+    async with _state_lock:
+        _state_store[state] = {**payload, "created_at": datetime.now(UTC)}
+
+
+async def _consume_state(state: str) -> dict[str, Any] | None:
+    """Return and delete the state entry if valid and not expired."""
+    async with _state_lock:
+        entry = _state_store.pop(state, None)
+    if not entry:
+        return None
+    age = datetime.now(UTC) - entry["created_at"].replace(tzinfo=UTC)
+    if age > _STATE_TTL:
+        return None
+    return entry
+
+
+async def _get_server_or_404(path: str) -> dict[str, Any]:
+    normalized_path = _normalize_path(path)
+    server = await server_service.get_server_info(normalized_path)
+    if not server:
+        raise HTTPException(status_code=404, detail=f"Server '{path}' not found")
+    return server
+
+
+@router.get("/servers/{path:path}/downstream/authorize")
+async def downstream_authorize(
+    path: str,
+    request: Request,
+    user_context: Annotated[dict[str, Any], Depends(enhanced_auth)],
+) -> RedirectResponse:
+    """Initiate downstream OAuth flow for the current user."""
+    server = await _get_server_or_404(path)
+    downstream_oauth = server.get("downstream_oauth", {})
+    if downstream_oauth.get("downstream_auth_type", "none") != "oauth2":
+        raise HTTPException(status_code=400, detail="Server does not require downstream OAuth")
+
+    normalized_path = server.get("path", _normalize_path(path))
+    username = user_context["username"]
+    proxy_pass_url = _get_proxy_url(server)
+    gateway_base_url = str(request.base_url).rstrip("/")
+    oauth_client = await resolve_client_for_server(
+        server_path=normalized_path,
+        proxy_pass_url=proxy_pass_url,
+        downstream_oauth_config=downstream_oauth,
+        gateway_base_url=gateway_base_url,
+        repo=_client_repo,
+    )
+
+    code_verifier, code_challenge = _generate_pkce()
+    state = secrets.token_urlsafe(32)
+    await _save_state(
+        state,
+        {
+            "username": username,
+            "server_path": normalized_path,
+            "code_verifier": code_verifier,
+        },
+    )
+
+    scopes = downstream_oauth.get("scopes", [])
+    await _consent_repo.record_consent(username, normalized_path, scopes)
+
+    params = {
+        "response_type": "code",
+        "client_id": oauth_client.client_id,
+        "redirect_uri": (
+            f"{gateway_base_url}/api/servers/{normalized_path.lstrip('/')}/downstream/callback"
+        ),
+        "scope": " ".join(scopes),
+        "state": state,
+        "code_challenge": code_challenge,
+        "code_challenge_method": "S256",
+        "resource": _get_resource_indicator(server),
+    }
+    redirect_url = f"{oauth_client.authorization_endpoint}?{urlencode(params)}"
+    return RedirectResponse(url=redirect_url, status_code=status.HTTP_302_FOUND)
+
+
+@router.get("/servers/{path:path}/downstream/callback")
+async def downstream_callback(
+    path: str,
+    request: Request,
+    code: str | None = None,
+    state: str | None = None,
+    error: str | None = None,
+) -> HTMLResponse:
+    """Handle downstream callback, exchange code for tokens, and persist them."""
+    if error:
+        return HTMLResponse(f"<h2>Authorization failed</h2><p>{error}</p>", status_code=400)
+    if not code or not state:
+        raise HTTPException(status_code=400, detail="Missing code or state")
+
+    state_data = await _consume_state(state)
+    if not state_data:
+        raise HTTPException(status_code=400, detail="Invalid or expired state")
+
+    normalized_path = _normalize_path(path)
+    if state_data["server_path"] != normalized_path:
+        raise HTTPException(status_code=400, detail="State/path mismatch")
+
+    server = await _get_server_or_404(normalized_path)
+    oauth_client = await _client_repo.get(normalized_path)
+    if not oauth_client:
+        raise HTTPException(status_code=500, detail="OAuth client config missing")
+
+    gateway_base_url = str(request.base_url).rstrip("/")
+    client_secret = _decrypt_client_secret(oauth_client.client_secret_encrypted)
+    token_payload: dict[str, Any] = {
+        "grant_type": "authorization_code",
+        "code": code,
+        "redirect_uri": (
+            f"{gateway_base_url}/api/servers/{normalized_path.lstrip('/')}/downstream/callback"
+        ),
+        "client_id": oauth_client.client_id,
+        "code_verifier": state_data["code_verifier"],
+        "resource": _get_resource_indicator(server),
+    }
+    token_headers: dict[str, str] = {}
+    if client_secret:
+        creds = base64.b64encode(f"{oauth_client.client_id}:{client_secret}".encode()).decode()
+        token_headers["Authorization"] = f"Basic {creds}"
+
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        resp = await client.post(
+            oauth_client.token_endpoint,
+            data=token_payload,
+            headers=token_headers,
+        )
+        resp.raise_for_status()
+        token_data = resp.json()
+
+    expires_at = None
+    if "expires_in" in token_data:
+        expires_at = datetime.now(UTC) + timedelta(seconds=int(token_data["expires_in"]))
+
+    await _token_repo.upsert(
+        UserServerTokenCreate(
+            username=state_data["username"],
+            server_path=normalized_path,
+            access_token=token_data["access_token"],
+            refresh_token=token_data.get("refresh_token"),
+            expires_at=expires_at,
+            token_type=token_data.get("token_type", "Bearer"),
+            scope=token_data.get("scope"),
+        )
+    )
+
+    logger.info(
+        "Downstream OAuth token stored for user=%s server=%s",
+        state_data["username"],
+        normalized_path,
+    )
+    return HTMLResponse(
+        "<h2>Connected!</h2><p>You can close this window.</p>"
+        "<script>window.opener && window.opener.postMessage('oauth_complete', '*'); window.close();</script>"
+    )
+
+
+@router.get("/servers/{path:path}/downstream/token/status")
+async def downstream_token_status(
+    path: str,
+    user_context: Annotated[dict[str, Any], Depends(enhanced_auth)],
+) -> UserServerTokenStatus:
+    """Return the downstream token status for the current user."""
+    server = await _get_server_or_404(path)
+    normalized_path = server.get("path", _normalize_path(path))
+    token = await _token_repo.get(user_context["username"], normalized_path)
+    if not token:
+        return UserServerTokenStatus(server_path=normalized_path, has_token=False, is_expired=True)
+
+    expired = await _token_repo.is_expired(user_context["username"], normalized_path)
+    return UserServerTokenStatus(
+        server_path=normalized_path,
+        has_token=True,
+        is_expired=expired,
+        scope=token.scope,
+        expires_at=token.expires_at,
+    )
+
+
+@router.delete("/servers/{path:path}/downstream/token", status_code=status.HTTP_204_NO_CONTENT)
+async def downstream_token_revoke(
+    path: str,
+    user_context: Annotated[dict[str, Any], Depends(enhanced_auth)],
+) -> None:
+    """Delete the stored downstream token for the current user."""
+    server = await _get_server_or_404(path)
+    normalized_path = server.get("path", _normalize_path(path))
+    username = user_context["username"]
+    await _token_repo.delete(username, normalized_path)
+    await _consent_repo.revoke_consent(username, normalized_path)

@@ -347,6 +347,11 @@ class TestGetServer:
             "path": "/test-server",
             "description": "Test",
             "is_enabled": True,
+            "downstream_oauth": {
+                "downstream_auth_type": "oauth2",
+                "client_id": "client-123",
+                "client_secret_encrypted": "enc-secret",
+            },
         }
         mock_server_service.get_server_info.return_value = server_info
 
@@ -356,6 +361,7 @@ class TestGetServer:
         data = response.json()
         assert "auth_credential_encrypted" not in data
         assert "auth_credential" not in data
+        assert "client_secret_encrypted" not in data["downstream_oauth"]
 
     def test_get_server_includes_tools(
         self,

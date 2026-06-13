@@ -187,6 +187,11 @@ def strip_credentials_from_dict(
     server_dict.pop(PLAINTEXT_FIELD, None)
     server_dict.pop(CUSTOM_HEADERS_ENCRYPTED_FIELD, None)
     server_dict.pop(CUSTOM_HEADERS_PLAINTEXT_FIELD, None)
+
+    downstream_oauth = server_dict.get("downstream_oauth")
+    if isinstance(downstream_oauth, dict):
+        downstream_oauth.pop("client_secret_encrypted", None)
+
     return server_dict
 
 
