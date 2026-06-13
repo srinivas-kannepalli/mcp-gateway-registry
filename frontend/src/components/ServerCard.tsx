@@ -31,7 +31,7 @@ import useEscapeKey from '../hooks/useEscapeKey';
 import { formatRelativeTime } from '../utils/dateUtils';
 import { normalizeHealthStatus } from '../utils/healthStatus';
 import { useAuth } from '../contexts/AuthContext';
-import type { LocalRuntime } from '../types/server';
+import type { DownstreamOAuthConfig, LocalRuntime } from '../types/server';
 
 interface ServerVersion {
   version: string;
@@ -71,6 +71,7 @@ export interface Server {
   deployment?: 'remote' | 'local';
   local_runtime?: LocalRuntime;
   registered_by?: string | null;
+  downstream_oauth?: DownstreamOAuthConfig;
   // Version routing fields
   version?: string;  // Current active version
   versions?: ServerVersion[];
@@ -186,13 +187,67 @@ const ServerCard: React.FC<ServerCardProps> = React.memo(({ server, onToggle, on
   const [expandedDescriptions, setExpandedDescriptions] = useState<Set<number>>(new Set());
   const [showClearSecurityPendingConfirm, setShowClearSecurityPendingConfirm] = useState(false);
   const [clearingSecurityPending, setClearingSecurityPending] = useState(false);
+  const [downstreamTokenStatus, setDownstreamTokenStatus] = useState<{
+    has_token: boolean;
+    is_expired: boolean;
+  } | null>(null);
+  const [downstreamLoading, setDownstreamLoading] = useState(false);
 
   const closeToolsModal = useCallback(() => {
     setShowTools(false);
     setExpandedDescriptions(new Set());
   }, []);
+  const hasDownstreamOAuth = server.downstream_oauth?.downstream_auth_type === 'oauth2';
+
+  const fetchDownstreamStatus = useCallback(async () => {
+    if (!hasDownstreamOAuth) {
+      setDownstreamTokenStatus(null);
+      return;
+    }
+
+    setDownstreamLoading(true);
+    try {
+      const response = await axios.get(`/api/servers${server.path}/downstream/token/status`);
+      setDownstreamTokenStatus(response.data);
+    } catch (error) {
+      console.error('Failed to fetch downstream OAuth status:', error);
+      setDownstreamTokenStatus({ has_token: false, is_expired: true });
+    } finally {
+      setDownstreamLoading(false);
+    }
+  }, [hasDownstreamOAuth, server.path]);
+
+  const handleConnectDownstreamOAuth = useCallback(() => {
+    const popup = window.open(
+      `/api/servers${server.path}/downstream/authorize`,
+      `downstream-oauth-${server.path}`,
+      'width=640,height=720'
+    );
+    if (!popup) {
+      onShowToast?.('Popup blocked. Please allow popups and try again.', 'error');
+      return;
+    }
+
+    const onMessage = (event: MessageEvent) => {
+      if (event.data !== 'oauth_complete') {
+        return;
+      }
+      window.removeEventListener('message', onMessage);
+      fetchDownstreamStatus();
+      onShowToast?.('Downstream OAuth connected', 'success');
+    };
+
+    window.addEventListener('message', onMessage);
+  }, [fetchDownstreamStatus, onShowToast, server.path]);
   useEscapeKey(closeToolsModal, showTools);
   useEscapeKey(() => setShowDeleteConfirm(false), showDeleteConfirm);
+
+  useEffect(() => {
+    if (!hasDownstreamOAuth) {
+      return;
+    }
+    fetchDownstreamStatus();
+  }, [fetchDownstreamStatus, hasDownstreamOAuth]);
 
   // Fetch security scan status on mount to show correct icon color.
   // Local (stdio) servers are never auto-scanned (no HTTP endpoint to probe);
@@ -554,6 +609,22 @@ const ServerCard: React.FC<ServerCardProps> = React.memo(({ server, onToggle, on
                     API KEY AUTH
                   </span>
                 )}
+                {hasDownstreamOAuth && (
+                  <span
+                    className={`px-2 py-0.5 text-xs font-semibold rounded-full flex-shrink-0 border ${
+                      downstreamTokenStatus?.has_token && !downstreamTokenStatus?.is_expired
+                        ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300 border-green-200 dark:border-green-600'
+                        : 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300 border-orange-200 dark:border-orange-600'
+                    }`}
+                    title="Downstream OAuth connection status"
+                  >
+                    {downstreamLoading
+                      ? 'DOWNSTREAM CONNECTING'
+                      : downstreamTokenStatus?.has_token && !downstreamTokenStatus?.is_expired
+                        ? 'DOWNSTREAM CONNECTED'
+                        : 'DOWNSTREAM AUTH REQUIRED'}
+                  </span>
+                )}
               </div>
               
               <code className="text-xs text-gray-600 dark:text-gray-300 bg-gray-50 dark:bg-gray-800/50 px-2 py-1 rounded font-mono">
@@ -582,6 +653,22 @@ const ServerCard: React.FC<ServerCardProps> = React.memo(({ server, onToggle, on
               <LinkIcon className="h-3.5 w-3.5" />
               Connect
             </button>
+            {hasDownstreamOAuth && (
+              <button
+                onClick={handleConnectDownstreamOAuth}
+                className="flex items-center gap-1 px-2 py-1.5 text-xs font-medium text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-700/50 rounded-lg transition-all duration-200 flex-shrink-0 border border-blue-200 dark:border-blue-700"
+                title="Connect downstream OAuth for this server"
+                aria-label={`Connect downstream OAuth for ${server.name}`}
+                disabled={downstreamLoading}
+              >
+                <LinkIcon className="h-3.5 w-3.5" />
+                {downstreamLoading
+                  ? 'Checking...'
+                  : downstreamTokenStatus?.has_token && !downstreamTokenStatus?.is_expired
+                    ? 'Reconnect OAuth'
+                    : 'Connect OAuth'}
+              </button>
+            )}
 
             {/* Full JSON Details Button */}
             <button

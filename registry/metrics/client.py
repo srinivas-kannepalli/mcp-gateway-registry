@@ -379,13 +379,16 @@ class EnhancedMCPClientService:
         self.original_client = mcp_client_service
 
     async def get_tools_from_server_with_server_info(
-        self, base_url: str, server_info: dict = None
+        self,
+        base_url: str,
+        server_info: dict = None,
+        username: str | None = None,
     ) -> list[dict] | None:
         """Get tools from MCP server with metrics collection."""
         async with self.metrics_collector.track_tool_discovery(base_url) as tracker:
             # Call the original client method
             result = await self.original_client.get_tools_from_server_with_server_info(
-                base_url, server_info
+                base_url, server_info, username
             )
 
             # Set the result for metrics tracking

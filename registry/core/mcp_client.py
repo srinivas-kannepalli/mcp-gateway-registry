@@ -6,6 +6,7 @@ Copied directly from main_old.py working implementation.
 """
 
 import asyncio
+import base64
 import logging
 import re
 from typing import (
@@ -138,6 +139,115 @@ def _build_headers_for_server(server_info: dict = None) -> dict[str, str]:
                 )
 
     return headers
+
+
+async def _refresh_downstream_access_token(
+    username: str,
+    server_info: dict,
+    token_repo,
+) -> str | None:
+    """Refresh an expired downstream access token when possible."""
+    from datetime import UTC, datetime, timedelta
+
+    from registry.repositories.documentdb.server_oauth_client_repository import (
+        ServerOAuthClientRepository,
+        _decrypt as _decrypt_oauth_secret,
+    )
+    from registry.schemas.user_server_token_models import UserServerTokenCreate
+
+    server_path = server_info.get("path", "")
+    downstream_oauth = server_info.get("downstream_oauth", {})
+    oauth_client = await ServerOAuthClientRepository().get(server_path)
+    if not oauth_client:
+        return None
+
+    refresh_value = await token_repo.get_refresh_token(username, server_path)
+    if not refresh_value:
+        return None
+
+    client_secret = _decrypt_oauth_secret(oauth_client.client_secret_encrypted)
+    resource = downstream_oauth.get("resource_indicator") or server_info.get("proxy_pass_url", "")
+    payload = {
+        "grant_type": "refresh_token",
+        "refresh_token": refresh_value,
+        "client_id": oauth_client.client_id,
+        "resource": resource,
+    }
+    request_headers: dict[str, str] = {}
+    if client_secret:
+        creds = base64.b64encode(f"{oauth_client.client_id}:{client_secret}".encode()).decode()
+        request_headers["Authorization"] = f"Basic {creds}"
+
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        resp = await client.post(
+            oauth_client.token_endpoint,
+            data=payload,
+            headers=request_headers,
+        )
+        resp.raise_for_status()
+        token_data = resp.json()
+
+    expires_at = None
+    if "expires_in" in token_data:
+        expires_at = datetime.now(UTC) + timedelta(seconds=int(token_data["expires_in"]))
+
+    await token_repo.upsert(
+        UserServerTokenCreate(
+            username=username,
+            server_path=server_path,
+            access_token=token_data["access_token"],
+            refresh_token=token_data.get("refresh_token", refresh_value),
+            expires_at=expires_at,
+            token_type=token_data.get("token_type", "Bearer"),
+            scope=token_data.get("scope"),
+        )
+    )
+    logger.info("Auto-refreshed downstream token for user=%s server=%s", username, server_path)
+    return token_data["access_token"]
+
+
+async def _build_headers_for_server_async(
+    server_info: dict = None,
+    username: str | None = None,
+) -> dict[str, str]:
+    """Async version of _build_headers_for_server with downstream OAuth support."""
+    headers = _build_headers_for_server(server_info)
+    if not username or not server_info:
+        return headers
+
+    downstream_oauth = server_info.get("downstream_oauth", {})
+    if downstream_oauth.get("downstream_auth_type") != "oauth2":
+        return headers
+
+    from registry.repositories.documentdb.user_server_token_repository import UserServerTokenRepository
+
+    server_path = server_info.get("path", "")
+    token_repo = UserServerTokenRepository()
+    token = await token_repo.get(username, server_path)
+    if not token:
+        return headers
+
+    access_token: str | None = None
+    expired = await token_repo.is_expired(username, server_path)
+    if expired and token.refresh_token_encrypted:
+        try:
+            access_token = await _refresh_downstream_access_token(username, server_info, token_repo)
+        except Exception as exc:
+            logger.warning("Token refresh failed for %s: %s", server_path, exc)
+
+    if not access_token:
+        access_token = await token_repo.get_access_token(username, server_path)
+
+    if access_token:
+        headers["Authorization"] = f"Bearer {access_token}"
+        logger.debug(
+            "Injected downstream OAuth token for user=%s server=%s",
+            username,
+            server_path,
+        )
+
+    return headers
+
 
 
 def normalize_sse_endpoint_url_for_request(url_str: str) -> str:
@@ -289,10 +399,14 @@ async def get_tools_from_server_with_transport(
         return None
 
 
-async def _get_tools_streamable_http(base_url: str, server_info: dict = None) -> list[dict] | None:
+async def _get_tools_streamable_http(
+    base_url: str,
+    server_info: dict = None,
+    username: str | None = None,
+) -> list[dict] | None:
     """Get tools using streamable-http transport"""
     # Build headers for the server
-    headers = _build_headers_for_server(server_info)
+    headers = await _build_headers_for_server_async(server_info, username)
 
     # Check if server_info has explicit mcp_endpoint
     explicit_endpoint = server_info.get("mcp_endpoint") if server_info else None
@@ -400,7 +514,11 @@ async def _get_tools_streamable_http(base_url: str, server_info: dict = None) ->
     return None
 
 
-async def _get_tools_sse(base_url: str, server_info: dict = None) -> list[dict] | None:
+async def _get_tools_sse(
+    base_url: str,
+    server_info: dict = None,
+    username: str | None = None,
+) -> list[dict] | None:
     """Get tools using SSE transport (legacy method with patches)"""
     # Check if server_info has explicit sse_endpoint
     explicit_endpoint = server_info.get("sse_endpoint") if server_info else None
@@ -418,7 +536,7 @@ async def _get_tools_sse(base_url: str, server_info: dict = None) -> list[dict] 
     mcp_server_url = f"http{secure_prefix}://{sse_url[len(f'http{secure_prefix}://') :]}"
 
     # Build headers for the server
-    headers = _build_headers_for_server(server_info)
+    headers = await _build_headers_for_server_async(server_info, username)
 
     try:
         # Monkey patch httpx to fix mount path issues (legacy SSE support)
@@ -536,7 +654,9 @@ def _extract_tool_details(tools_response) -> list[dict]:
 
 
 async def get_tools_from_server_with_server_info(
-    base_url: str, server_info: dict = None
+    base_url: str,
+    server_info: dict = None,
+    username: str | None = None,
 ) -> list[dict] | None:
     """
     Get tools from server using server configuration to determine optimal transport.
@@ -563,9 +683,9 @@ async def get_tools_from_server_with_server_info(
 
     try:
         if transport == "streamable-http":
-            return await _get_tools_streamable_http(base_url, server_info)
+            return await _get_tools_streamable_http(base_url, server_info, username)
         elif transport == "sse":
-            return await _get_tools_sse(base_url, server_info)
+            return await _get_tools_sse(base_url, server_info, username)
         else:
             logger.error(f"Unsupported transport type: {transport}")
             return None
@@ -578,7 +698,9 @@ async def get_tools_from_server_with_server_info(
 
 
 async def get_mcp_connection_result(
-    base_url: str, server_info: dict = None
+    base_url: str,
+    server_info: dict = None,
+    username: str | None = None,
 ) -> MCPConnectionResult | None:
     """
     Connect to MCP server and return both tools and server info.
@@ -603,7 +725,7 @@ async def get_mcp_connection_result(
     logger.info(f"Getting MCP connection result from {base_url} using {transport} transport...")
 
     # Build headers for the server
-    headers = _build_headers_for_server(server_info)
+    headers = await _build_headers_for_server_async(server_info, username)
 
     # Determine the MCP endpoint URL
     explicit_endpoint = server_info.get("mcp_endpoint") if server_info else None
@@ -717,16 +839,22 @@ class MCPClientService:
     """Service wrapper for the MCP client function to maintain compatibility."""
 
     async def get_tools_from_server_with_server_info(
-        self, base_url: str, server_info: dict = None
+        self,
+        base_url: str,
+        server_info: dict = None,
+        username: str | None = None,
     ) -> list[dict] | None:
         """Wrapper method that uses server configuration for transport selection."""
-        return await get_tools_from_server_with_server_info(base_url, server_info)
+        return await get_tools_from_server_with_server_info(base_url, server_info, username)
 
     async def get_mcp_connection_result(
-        self, base_url: str, server_info: dict = None
+        self,
+        base_url: str,
+        server_info: dict = None,
+        username: str | None = None,
     ) -> MCPConnectionResult | None:
         """Get both tools and server info from MCP server."""
-        return await get_mcp_connection_result(base_url, server_info)
+        return await get_mcp_connection_result(base_url, server_info, username)
 
 
 # Global MCP client service instance

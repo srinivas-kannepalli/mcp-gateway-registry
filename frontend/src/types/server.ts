@@ -22,3 +22,12 @@ export interface LocalRuntime {
   version?: string;
 }
 
+export interface DownstreamOAuthConfig {
+  downstream_auth_type?: 'none' | 'oauth2';
+  dcr_enabled?: boolean;
+  client_id?: string | null;
+  token_url?: string | null;
+  auth_url?: string | null;
+  scopes?: string[];
+  resource_indicator?: string | null;
+}

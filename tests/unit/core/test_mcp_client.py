@@ -765,7 +765,7 @@ async def test_mcp_client_service_wrapper(mock_server_info):
     ) as mock_get:
         result = await service.get_tools_from_server_with_server_info(url, mock_server_info)
 
-        mock_get.assert_awaited_once_with(url, mock_server_info)
+        mock_get.assert_awaited_once_with(url, mock_server_info, None)
         assert len(result) == 1
         assert result[0]["name"] == "tool1"
 

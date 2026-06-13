@@ -241,6 +241,22 @@ class TestStripCredentialsFromDict:
         assert result["path"] == "/test-server"
         assert "credential_updated_at" in result
 
+    def test_strip_credentials_from_dict_removes_downstream_oauth_client_secret(self):
+        """Nested downstream OAuth client secrets are removed from API-bound dicts."""
+        server_dict = {
+            "path": "/test-server",
+            "downstream_oauth": {
+                "downstream_auth_type": "oauth2",
+                "client_id": "client-123",
+                "client_secret_encrypted": "enc-secret",
+            },
+        }
+
+        result = strip_credentials_from_dict(server_dict)
+
+        assert "client_secret_encrypted" not in result["downstream_oauth"]
+        assert result["downstream_oauth"]["client_id"] == "client-123"
+
     def test_strip_credentials_from_dict_no_credential_fields(self):
         """Dict without credential fields is returned unchanged."""
         # Arrange
