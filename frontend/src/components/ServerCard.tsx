@@ -686,12 +686,12 @@ const ServerCard: React.FC<ServerCardProps> = React.memo(({ server, onToggle, on
             {hasDownstreamOAuth && downstreamTokenStatus?.has_token && (
               <button
                 onClick={handleRevokeDownstreamOAuth}
-                className="flex items-center gap-1 px-2 py-1.5 text-xs font-medium text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-700/50 rounded-lg transition-all duration-200 flex-shrink-0 border border-red-200 dark:border-red-700"
-                title="Disconnect and delete your stored OAuth token"
-                aria-label={`Disconnect downstream OAuth for ${server.name}`}
+                className="p-1.5 text-red-400 hover:text-red-600 dark:hover:text-red-300 hover:bg-red-50 dark:hover:bg-red-900/30 rounded-lg transition-all duration-200 flex-shrink-0"
+                title="Revoke stored OAuth token"
+                aria-label={`Revoke downstream OAuth token for ${server.name}`}
                 disabled={downstreamRevoking}
               >
-                {downstreamRevoking ? 'Disconnecting...' : 'Disconnect'}
+                <XCircleIcon className="h-4 w-4" />
               </button>
             )}
 
