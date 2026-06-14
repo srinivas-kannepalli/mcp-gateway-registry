@@ -192,6 +192,7 @@ const ServerCard: React.FC<ServerCardProps> = React.memo(({ server, onToggle, on
     is_expired: boolean;
   } | null>(null);
   const [downstreamLoading, setDownstreamLoading] = useState(false);
+  const [downstreamRevoking, setDownstreamRevoking] = useState(false);
 
   const closeToolsModal = useCallback(() => {
     setShowTools(false);
@@ -239,6 +240,19 @@ const ServerCard: React.FC<ServerCardProps> = React.memo(({ server, onToggle, on
 
     window.addEventListener('message', onMessage);
   }, [fetchDownstreamStatus, onShowToast, server.path]);
+
+  const handleRevokeDownstreamOAuth = useCallback(async () => {
+    setDownstreamRevoking(true);
+    try {
+      await axios.delete(`/api/servers${server.path}/downstream/token`);
+      setDownstreamTokenStatus({ has_token: false, is_expired: true });
+      onShowToast?.('Downstream OAuth disconnected', 'success');
+    } catch {
+      onShowToast?.('Failed to disconnect downstream OAuth', 'error');
+    } finally {
+      setDownstreamRevoking(false);
+    }
+  }, [onShowToast, server.path]);
   useEscapeKey(closeToolsModal, showTools);
   useEscapeKey(() => setShowDeleteConfirm(false), showDeleteConfirm);
 
@@ -667,6 +681,17 @@ const ServerCard: React.FC<ServerCardProps> = React.memo(({ server, onToggle, on
                   : downstreamTokenStatus?.has_token && !downstreamTokenStatus?.is_expired
                     ? 'Reauthorize'
                     : 'Authorize'}
+              </button>
+            )}
+            {hasDownstreamOAuth && downstreamTokenStatus?.has_token && (
+              <button
+                onClick={handleRevokeDownstreamOAuth}
+                className="flex items-center gap-1 px-2 py-1.5 text-xs font-medium text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-700/50 rounded-lg transition-all duration-200 flex-shrink-0 border border-red-200 dark:border-red-700"
+                title="Disconnect and delete your stored OAuth token"
+                aria-label={`Disconnect downstream OAuth for ${server.name}`}
+                disabled={downstreamRevoking}
+              >
+                {downstreamRevoking ? 'Disconnecting...' : 'Disconnect'}
               </button>
             )}
 
