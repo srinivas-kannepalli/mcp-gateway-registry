@@ -2401,11 +2401,22 @@ async def edit_server_submit(
     except Exception as e:
         logger.warning(f"Failed to update search index for '{service_path}': {e}")
 
-    # Flush nginx config immediately (edit must take effect before response)
+    # Nginx reload: only block the response when routing-relevant fields changed
+    # (proxy_pass_url, auth, custom_headers, endpoints). Metadata-only edits
+    # (name, description, tags, status) don't affect nginx config — let the
+    # background scheduler pick those up asynchronously to keep saves fast.
+    _ROUTING_FIELDS = {"proxy_pass_url", "auth_scheme", "auth_credential", "auth_header_name",
+                       "auth_credential_encrypted", "custom_headers_encrypted", "custom_header_names",
+                       "mcp_endpoint", "sse_endpoint", "deployment"}
+    existing_routing = {k: server_info.get(k) for k in _ROUTING_FIELDS}
+    updated_routing = {k: updated_server_entry.get(k) for k in _ROUTING_FIELDS}
+    routing_changed = existing_routing != updated_routing
+
     from ..core.nginx_service import nginx_reload_scheduler
 
     nginx_reload_scheduler.mark_dirty()
-    await nginx_reload_scheduler.flush_now()
+    if routing_changed:
+        await nginx_reload_scheduler.flush_now()
 
     logger.info(f"Server '{name}' ({service_path}) updated by user '{user_context['username']}'")
 
