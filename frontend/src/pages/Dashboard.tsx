@@ -242,6 +242,13 @@ const Dashboard: React.FC<DashboardProps> = ({ activeFilter = 'all', setActiveFi
     auth_credential: '',
     auth_header_name: 'X-API-Key',
     status: 'active' as 'active' | 'draft' | 'deprecated' | 'beta',
+    // Downstream OAuth 2.0 fields
+    oauth_dcr_enabled: false,
+    oauth_client_id: '',
+    oauth_client_secret: '',
+    oauth_scopes: '',
+    oauth_auth_url: '',
+    oauth_token_url: '',
     // Local-server fields
     deployment: 'remote' as 'remote' | 'local',
     local_runtime: {
@@ -1124,13 +1131,21 @@ const Dashboard: React.FC<DashboardProps> = ({ activeFilter = 'all', setActiveFi
         num_tools: serverDetails.num_tools || 0,
         mcp_endpoint: serverDetails.mcp_endpoint || '',
         metadata: serverDetails.metadata ? JSON.stringify(serverDetails.metadata, null, 2) : '',
-        auth_scheme: serverDetails.auth_scheme || 'none',
+        auth_scheme: serverDetails.downstream_oauth?.downstream_auth_type === 'oauth2'
+          ? 'oauth2'
+          : (serverDetails.auth_scheme || 'none'),
         auth_credential: '',
         auth_header_name: serverDetails.auth_header_name || 'X-API-Key',
         status: serverDetails.status || 'active',
         deployment,
         local_runtime: buildLocalRuntimeForm(localRuntimeRaw),
         custom_headers: (serverDetails.custom_header_names || []).map((name: string) => ({ name, value: '' })),
+        oauth_dcr_enabled: serverDetails.downstream_oauth?.dcr_enabled ?? false,
+        oauth_client_id: serverDetails.downstream_oauth?.client_id ?? '',
+        oauth_client_secret: '',
+        oauth_scopes: (serverDetails.downstream_oauth?.scopes ?? []).join(' '),
+        oauth_auth_url: serverDetails.downstream_oauth?.auth_url ?? '',
+        oauth_token_url: serverDetails.downstream_oauth?.token_url ?? '',
       });
     } catch (error) {
       console.error('Failed to fetch server details:', error);
@@ -1154,6 +1169,12 @@ const Dashboard: React.FC<DashboardProps> = ({ activeFilter = 'all', setActiveFi
         deployment,
         local_runtime: buildLocalRuntimeForm(server.local_runtime),
         custom_headers: [],
+        oauth_dcr_enabled: false,
+        oauth_client_id: '',
+        oauth_client_secret: '',
+        oauth_scopes: '',
+        oauth_auth_url: '',
+        oauth_token_url: '',
       });
     }
   }, []);
@@ -1264,8 +1285,8 @@ const Dashboard: React.FC<DashboardProps> = ({ activeFilter = 'all', setActiveFi
           params.append('mcp_endpoint', editForm.mcp_endpoint);
         }
         if (editForm.auth_scheme !== 'none') {
-          params.append('auth_scheme', editForm.auth_scheme);
-          if (editForm.auth_credential) {
+          params.append('auth_scheme', editForm.auth_scheme === 'oauth2' ? 'none' : editForm.auth_scheme);
+          if (editForm.auth_credential && editForm.auth_scheme !== 'oauth2') {
             params.append('auth_credential', editForm.auth_credential);
           }
           if (editForm.auth_scheme === 'api_key' && editForm.auth_header_name) {
@@ -1273,6 +1294,21 @@ const Dashboard: React.FC<DashboardProps> = ({ activeFilter = 'all', setActiveFi
           }
         } else {
           params.append('auth_scheme', 'none');
+        }
+
+        if (editForm.auth_scheme === 'oauth2') {
+          const downstreamOAuth: Record<string, unknown> = {
+            downstream_auth_type: 'oauth2',
+            dcr_enabled: editForm.oauth_dcr_enabled,
+            scopes: editForm.oauth_scopes.split(/\s+/).filter(Boolean),
+          };
+          if (!editForm.oauth_dcr_enabled) {
+            if (editForm.oauth_client_id) downstreamOAuth.client_id = editForm.oauth_client_id;
+            if (editForm.oauth_client_secret) downstreamOAuth.client_secret = editForm.oauth_client_secret;
+          }
+          if (editForm.oauth_auth_url) downstreamOAuth.auth_url = editForm.oauth_auth_url;
+          if (editForm.oauth_token_url) downstreamOAuth.token_url = editForm.oauth_token_url;
+          params.append('downstream_oauth', JSON.stringify(downstreamOAuth));
         }
       }
 
@@ -3329,10 +3365,11 @@ const Dashboard: React.FC<DashboardProps> = ({ activeFilter = 'all', setActiveFi
                         <option value="none">None</option>
                         <option value="bearer">Bearer Token</option>
                         <option value="api_key">API Key</option>
+                        <option value="oauth2">OAuth 2.0</option>
                       </select>
                     </div>
 
-                    {editForm.auth_scheme !== 'none' && (
+                    {editForm.auth_scheme !== 'none' && editForm.auth_scheme !== 'oauth2' && (
                       <div>
                         <label className="block text-sm font-medium text-gray-700 dark:text-gray-200 mb-1">
                           {editForm.auth_scheme === 'bearer' ? 'Bearer Token' : 'API Key'}
@@ -3362,6 +3399,81 @@ const Dashboard: React.FC<DashboardProps> = ({ activeFilter = 'all', setActiveFi
                           className="block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-purple-500 focus:border-purple-500"
                           placeholder="X-API-Key"
                         />
+                      </div>
+                    )}
+
+                    {/* OAuth 2.0 sub-fields — SYNC WITH RegisterPage.tsx */}
+                    {editForm.auth_scheme === 'oauth2' && (
+                      <div className="space-y-3 p-3 bg-blue-50 dark:bg-blue-900/20 rounded-md border border-blue-200 dark:border-blue-700">
+                        <p className="text-xs text-blue-700 dark:text-blue-300">
+                          The gateway will broker OAuth tokens on behalf of each user.
+                        </p>
+                        <div className="flex items-center gap-2">
+                          <input
+                            id="edit-oauth-dcr"
+                            type="checkbox"
+                            checked={editForm.oauth_dcr_enabled}
+                            onChange={(e) => setEditForm(prev => ({ ...prev, oauth_dcr_enabled: e.target.checked }))}
+                            className="h-4 w-4 text-purple-600 rounded border-gray-300"
+                          />
+                          <label htmlFor="edit-oauth-dcr" className="text-sm text-gray-700 dark:text-gray-200">
+                            Dynamic Client Registration (RFC 7591)
+                          </label>
+                        </div>
+                        {!editForm.oauth_dcr_enabled && (
+                          <>
+                            <div>
+                              <label className="block text-sm font-medium text-gray-700 dark:text-gray-200 mb-1">Client ID</label>
+                              <input
+                                type="text"
+                                value={editForm.oauth_client_id}
+                                onChange={(e) => setEditForm(prev => ({ ...prev, oauth_client_id: e.target.value }))}
+                                className="block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-purple-500 focus:border-purple-500 text-sm"
+                                placeholder="client_id"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-sm font-medium text-gray-700 dark:text-gray-200 mb-1">Client Secret</label>
+                              <input
+                                type="password"
+                                value={editForm.oauth_client_secret}
+                                onChange={(e) => setEditForm(prev => ({ ...prev, oauth_client_secret: e.target.value }))}
+                                className="block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-purple-500 focus:border-purple-500 text-sm"
+                                placeholder="Leave blank to keep existing"
+                              />
+                            </div>
+                          </>
+                        )}
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 dark:text-gray-200 mb-1">Scopes</label>
+                          <input
+                            type="text"
+                            value={editForm.oauth_scopes}
+                            onChange={(e) => setEditForm(prev => ({ ...prev, oauth_scopes: e.target.value }))}
+                            className="block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-purple-500 focus:border-purple-500 text-sm"
+                            placeholder="openid profile email (space-separated)"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 dark:text-gray-200 mb-1">Authorization URL <span className="text-gray-400">(optional override)</span></label>
+                          <input
+                            type="url"
+                            value={editForm.oauth_auth_url}
+                            onChange={(e) => setEditForm(prev => ({ ...prev, oauth_auth_url: e.target.value }))}
+                            className="block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-purple-500 focus:border-purple-500 text-sm"
+                            placeholder="https://auth.example.com/authorize"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 dark:text-gray-200 mb-1">Token URL <span className="text-gray-400">(optional override)</span></label>
+                          <input
+                            type="url"
+                            value={editForm.oauth_token_url}
+                            onChange={(e) => setEditForm(prev => ({ ...prev, oauth_token_url: e.target.value }))}
+                            className="block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-purple-500 focus:border-purple-500 text-sm"
+                            placeholder="https://auth.example.com/token"
+                          />
+                        </div>
                       </div>
                     )}
                   </div>
