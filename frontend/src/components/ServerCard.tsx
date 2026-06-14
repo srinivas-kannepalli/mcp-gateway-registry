@@ -626,17 +626,19 @@ const ServerCard: React.FC<ServerCardProps> = React.memo(({ server, onToggle, on
                 {hasDownstreamOAuth && (
                   <span
                     className={`px-2 py-0.5 text-xs font-semibold rounded-full flex-shrink-0 border ${
-                      downstreamTokenStatus?.has_token && !downstreamTokenStatus?.is_expired
-                        ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300 border-green-200 dark:border-green-600'
-                        : 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300 border-orange-200 dark:border-orange-600'
+                      downstreamLoading
+                        ? 'bg-purple-50 text-purple-500 dark:bg-purple-900/20 dark:text-purple-400 border-purple-200 dark:border-purple-700'
+                        : downstreamTokenStatus?.has_token && !downstreamTokenStatus?.is_expired
+                          ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300 border-green-200 dark:border-green-600'
+                          : 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300 border-purple-200 dark:border-purple-600'
                     }`}
                     title="Downstream OAuth connection status"
                   >
                     {downstreamLoading
-                      ? 'DOWNSTREAM CONNECTING'
+                      ? 'OAUTH CHECKING...'
                       : downstreamTokenStatus?.has_token && !downstreamTokenStatus?.is_expired
-                        ? 'DOWNSTREAM CONNECTED'
-                        : 'DOWNSTREAM AUTH REQUIRED'}
+                        ? 'OAUTH CONNECTED'
+                        : 'OAUTH REQUIRED'}
                   </span>
                 )}
               </div>
@@ -667,31 +669,39 @@ const ServerCard: React.FC<ServerCardProps> = React.memo(({ server, onToggle, on
               <LinkIcon className="h-3.5 w-3.5" />
               Setup
             </button>
-            {hasDownstreamOAuth && (
+            {hasDownstreamOAuth && !downstreamTokenStatus?.has_token && (
               <button
                 onClick={handleConnectDownstreamOAuth}
-                className="flex items-center gap-1 px-2 py-1.5 text-xs font-medium text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-700/50 rounded-lg transition-all duration-200 flex-shrink-0 border border-blue-200 dark:border-blue-700"
+                className="flex items-center gap-1 px-2 py-1.5 text-xs font-medium text-purple-600 dark:text-purple-400 hover:bg-purple-50 dark:hover:bg-purple-700/50 rounded-lg transition-all duration-200 flex-shrink-0 border border-purple-200 dark:border-purple-700"
                 title="Authorize your account to access this downstream server"
                 aria-label={`Authorize downstream OAuth for ${server.name}`}
                 disabled={downstreamLoading}
               >
                 <LinkIcon className="h-3.5 w-3.5" />
-                {downstreamLoading
-                  ? 'Checking...'
-                  : downstreamTokenStatus?.has_token && !downstreamTokenStatus?.is_expired
-                    ? 'Reauthorize'
-                    : 'Authorize'}
+                Authorize
               </button>
             )}
-            {hasDownstreamOAuth && downstreamTokenStatus?.has_token && (
+            {hasDownstreamOAuth && downstreamTokenStatus?.has_token && !downstreamTokenStatus?.is_expired && (
               <button
                 onClick={handleRevokeDownstreamOAuth}
-                className="p-1.5 text-red-400 hover:text-red-600 dark:hover:text-red-300 hover:bg-red-50 dark:hover:bg-red-900/30 rounded-lg transition-all duration-200 flex-shrink-0"
+                className="p-1.5 text-purple-400 hover:text-red-500 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30 rounded-lg transition-all duration-200 flex-shrink-0"
                 title="Revoke stored OAuth token"
                 aria-label={`Revoke downstream OAuth token for ${server.name}`}
                 disabled={downstreamRevoking}
               >
                 <XCircleIcon className="h-4 w-4" />
+              </button>
+            )}
+            {hasDownstreamOAuth && downstreamTokenStatus?.has_token && downstreamTokenStatus?.is_expired && (
+              <button
+                onClick={handleConnectDownstreamOAuth}
+                className="flex items-center gap-1 px-2 py-1.5 text-xs font-medium text-purple-600 dark:text-purple-400 hover:bg-purple-50 dark:hover:bg-purple-700/50 rounded-lg transition-all duration-200 flex-shrink-0 border border-purple-200 dark:border-purple-700"
+                title="Token expired — authorize again to reconnect"
+                aria-label={`Re-authorize downstream OAuth for ${server.name}`}
+                disabled={downstreamLoading}
+              >
+                <LinkIcon className="h-3.5 w-3.5" />
+                Authorize
               </button>
             )}
 
