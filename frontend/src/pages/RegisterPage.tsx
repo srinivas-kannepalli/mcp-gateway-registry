@@ -592,7 +592,7 @@ const RegisterPage: React.FC = () => {
         if (serverForm.sse_endpoint) {
           formData.append('sse_endpoint', serverForm.sse_endpoint);
         }
-        if (serverForm.auth_scheme !== 'none') {
+        if (serverForm.auth_scheme !== 'none' && serverForm.auth_scheme !== 'oauth2') {
           formData.append('auth_scheme', serverForm.auth_scheme);
           if (serverForm.auth_credential) {
             formData.append('auth_credential', serverForm.auth_credential);
@@ -600,6 +600,8 @@ const RegisterPage: React.FC = () => {
           if (serverForm.auth_scheme === 'api_key' && serverForm.auth_header_name) {
             formData.append('auth_header_name', serverForm.auth_header_name);
           }
+        } else {
+          formData.append('auth_scheme', 'none');
         }
         // Downstream OAuth config — sent as JSON when OAuth 2.0 scheme is selected.
         if (serverForm.auth_scheme === 'oauth2') {

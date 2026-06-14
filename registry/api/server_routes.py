@@ -1103,6 +1103,7 @@ async def register_service(
     source_updated_at: Annotated[str | None, Form()] = None,
     deployment: Annotated[str, Form()] = "remote",
     local_runtime: Annotated[str | None, Form()] = None,
+    downstream_oauth: Annotated[str | None, Form()] = None,
     user_context: Annotated[dict, Depends(enhanced_auth)] = None,
 ):
     """Register a new service (requires register_service UI permission).
@@ -1280,6 +1281,17 @@ async def register_service(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Failed to encrypt custom headers",
             )
+
+    # Downstream OAuth config (user-level OAuth for downstream servers)
+    if downstream_oauth:
+        try:
+            import json as _json
+
+            oauth_data = _json.loads(downstream_oauth)
+            if isinstance(oauth_data, dict) and oauth_data.get("downstream_auth_type"):
+                server_entry["downstream_oauth"] = oauth_data
+        except Exception as e:
+            logger.warning(f"Failed to parse downstream_oauth during registration: {e}")
 
     # Add lifecycle and federation fields
     if service_status:
@@ -2094,6 +2106,7 @@ async def edit_server_submit(
     deployment: Annotated[str | None, Form()] = None,
     local_runtime: Annotated[str | None, Form()] = None,
     custom_headers: Annotated[str | None, Form()] = None,
+    downstream_oauth: Annotated[str | None, Form()] = None,
     _csrf: Annotated[None, Depends(verify_csrf_token_flexible)] = None,
 ):
     """Handle server edit form submission (requires modify_service UI permission).
@@ -2382,13 +2395,27 @@ async def edit_server_submit(
                     detail="Failed to encrypt custom headers",
                 )
 
+    # Downstream OAuth config (user-level OAuth for downstream servers)
+    if downstream_oauth is not None:
+        try:
+            import json as _json
+
+            oauth_data = _json.loads(downstream_oauth)
+            if isinstance(oauth_data, dict) and oauth_data.get("downstream_auth_type"):
+                # Deep-merge with existing downstream_oauth to preserve fields not sent
+                existing_oauth = server_info.get("downstream_oauth") or {}
+                updated_server_entry["downstream_oauth"] = {**existing_oauth, **oauth_data}
+            elif isinstance(oauth_data, dict) and not oauth_data:
+                # Empty object = clear downstream_oauth
+                updated_server_entry["downstream_oauth"] = None
+        except Exception as e:
+            logger.warning(f"Failed to parse downstream_oauth on edit: {e}")
+
     # Update server
     success = await server_service.update_server(service_path, updated_server_entry)
 
     if not success:
         raise HTTPException(status_code=500, detail="Failed to save updated server data")
-
-    # Update FAISS metadata (keep current enabled state)
     is_enabled = await server_service.is_service_enabled(service_path)
     await faiss_service.add_or_update_service(service_path, updated_server_entry, is_enabled)
 
