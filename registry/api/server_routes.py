@@ -736,6 +736,7 @@ async def get_servers_json(
                     "deployment": server_info.get("deployment", "remote"),
                     "local_runtime": server_info.get("local_runtime"),
                     "registered_by": server_info.get("registered_by"),
+                    "downstream_oauth": server_info.get("downstream_oauth"),
                 }
             )
 
