@@ -193,6 +193,7 @@ export const ServerStatsProvider: React.FC<ServerStatsProviderProps> = ({ childr
           deployment: serverInfo.deployment || 'remote',
           local_runtime: serverInfo.local_runtime,
           registered_by: serverInfo.registered_by ?? null,
+          downstream_oauth: serverInfo.downstream_oauth ?? undefined,
         };
         return transformed;
       });
