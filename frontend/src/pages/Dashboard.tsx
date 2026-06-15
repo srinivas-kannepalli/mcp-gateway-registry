@@ -262,7 +262,14 @@ const Dashboard: React.FC<DashboardProps> = ({ activeFilter = 'all', setActiveFi
     custom_headers: [] as Array<{ name: string; value: string }>,
   });
   const [editLoading, setEditLoading] = useState(false);
+  const [editFormOriginal, setEditFormOriginal] = useState<typeof editForm | null>(null);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+
+  // True only when the edit form has unsaved changes vs. what was loaded from the server.
+  const isEditFormDirty = useMemo(
+    () => editFormOriginal !== null && JSON.stringify(editForm) !== JSON.stringify(editFormOriginal),
+    [editForm, editFormOriginal],
+  );
 
   // Agent state management - using agents from useServerStats hook instead of separate fetch
   // Agents loading state is now handled by the useServerStats hook's 'loading' state
@@ -1121,7 +1128,7 @@ const Dashboard: React.FC<DashboardProps> = ({ activeFilter = 'all', setActiveFi
       const localRuntimeRaw = serverDetails.local_runtime || server.local_runtime;
 
       setEditingServer(server);
-      setEditForm({
+      const initialForm = {
         name: serverDetails.server_name || server.name,
         path: server.path,
         proxyPass: serverDetails.proxy_pass_url || '',
@@ -1146,13 +1153,15 @@ const Dashboard: React.FC<DashboardProps> = ({ activeFilter = 'all', setActiveFi
         oauth_scopes: (serverDetails.downstream_oauth?.scopes ?? []).join(' '),
         oauth_auth_url: serverDetails.downstream_oauth?.auth_url ?? '',
         oauth_token_url: serverDetails.downstream_oauth?.token_url ?? '',
-      });
+      };
+      setEditForm(initialForm);
+      setEditFormOriginal(initialForm);
     } catch (error) {
       console.error('Failed to fetch server details:', error);
       // Fallback to basic server data
       const deployment = (server.deployment || 'remote') as 'remote' | 'local';
       setEditingServer(server);
-      setEditForm({
+      const fallbackForm = {
         name: server.name,
         path: server.path,
         proxyPass: server.proxy_pass_url || '',
@@ -1175,7 +1184,9 @@ const Dashboard: React.FC<DashboardProps> = ({ activeFilter = 'all', setActiveFi
         oauth_scopes: '',
         oauth_auth_url: '',
         oauth_token_url: '',
-      });
+      };
+      setEditForm(fallbackForm);
+      setEditFormOriginal(fallbackForm);
     }
   }, []);
 
@@ -1235,6 +1246,7 @@ const Dashboard: React.FC<DashboardProps> = ({ activeFilter = 'all', setActiveFi
   const handleCloseEdit = () => {
     setEditingServer(null);
     setEditingAgent(null);
+    setEditFormOriginal(null);
   };
 
   const showToast = useCallback((message: string, type: 'success' | 'error' | 'info') => {
@@ -1332,6 +1344,7 @@ const Dashboard: React.FC<DashboardProps> = ({ activeFilter = 'all', setActiveFi
       // Refresh server list
       await refreshData();
       setEditingServer(null);
+      setEditFormOriginal(null);
 
       showToast('Server updated successfully!', 'success');
       notifyDataChanged();
@@ -3555,8 +3568,8 @@ const Dashboard: React.FC<DashboardProps> = ({ activeFilter = 'all', setActiveFi
               <div className="flex space-x-3 pt-4">
                 <button
                   type="submit"
-                  disabled={editLoading}
-                  className="flex-1 px-4 py-2 text-sm font-medium text-white bg-purple-600 hover:bg-purple-700 disabled:opacity-50 rounded-md transition-colors"
+                  disabled={editLoading || !isEditFormDirty}
+                  className="flex-1 px-4 py-2 text-sm font-medium text-white bg-purple-600 hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed rounded-md transition-colors"
                 >
                   {editLoading ? 'Saving...' : 'Save Changes'}
                 </button>
