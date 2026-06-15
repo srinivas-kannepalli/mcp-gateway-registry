@@ -77,17 +77,45 @@ async def downstream_authorize(
     if downstream_oauth.get("downstream_auth_type", "none") != "oauth2":
         raise HTTPException(status_code=400, detail="Server does not require downstream OAuth")
 
+    # Require at least auth_url+token_url OR a proxy_pass_url to discover them from.
+    has_manual_endpoints = downstream_oauth.get("auth_url") and downstream_oauth.get("token_url")
+    proxy_pass_url = _get_proxy_url(server)
+    if not has_manual_endpoints and not proxy_pass_url:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Cannot initiate OAuth: server has no auth_url/token_url configured and no "
+                "proxy_pass_url to auto-discover them from. Edit the server and add the "
+                "Authorization URL and Token URL."
+            ),
+        )
+
     normalized_path = server.get("path", _normalize_path(path))
     username = user_context["username"]
-    proxy_pass_url = _get_proxy_url(server)
     gateway_base_url = str(request.base_url).rstrip("/")
-    oauth_client = await resolve_client_for_server(
-        server_path=normalized_path,
-        proxy_pass_url=proxy_pass_url,
-        downstream_oauth_config=downstream_oauth,
-        gateway_base_url=gateway_base_url,
-        repo=_client_repo,
-    )
+    try:
+        oauth_client = await resolve_client_for_server(
+            server_path=normalized_path,
+            proxy_pass_url=proxy_pass_url,
+            downstream_oauth_config=downstream_oauth,
+            gateway_base_url=gateway_base_url,
+            repo=_client_repo,
+        )
+    except ValueError as exc:
+        logger.warning("OAuth client resolution failed for %s: %s", normalized_path, exc)
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except httpx.HTTPStatusError as exc:
+        logger.warning("HTTP error during OAuth setup for %s: %s", normalized_path, exc)
+        raise HTTPException(
+            status_code=502,
+            detail=f"Upstream OAuth server returned an error: {exc.response.status_code}",
+        ) from exc
+    except httpx.RequestError as exc:
+        logger.warning("Network error during OAuth setup for %s: %s", normalized_path, exc)
+        raise HTTPException(
+            status_code=502,
+            detail="Could not reach the upstream OAuth server. Check the server URL.",
+        ) from exc
 
     code_verifier, code_challenge = _generate_pkce()
     state = secrets.token_urlsafe(32)
