@@ -1274,9 +1274,15 @@ if FRONTEND_BUILD_PATH.exists():
             raise HTTPException(status_code=404)
 
         if _CACHED_INDEX_HTML is not None:
-            return HTMLResponse(content=_CACHED_INDEX_HTML)
+            return HTMLResponse(
+                content=_CACHED_INDEX_HTML,
+                headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+            )
 
-        return FileResponse(FRONTEND_BUILD_PATH / "index.html")
+        return FileResponse(
+            FRONTEND_BUILD_PATH / "index.html",
+            headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+        )
 else:
     logger.warning(
         "React build directory not found. Serve React app separately during development."
