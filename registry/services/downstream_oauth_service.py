@@ -47,11 +47,41 @@ def _reject_ssrf(url: str) -> None:
 
 
 async def discover_as_metadata(proxy_pass_url: str) -> dict[str, Any]:
-    """Discover AS metadata for an OAuth-protected MCP server."""
-    base = proxy_pass_url.rstrip("/")
-    prm_url = f"{base}/.well-known/oauth-protected-resource"
-    _reject_ssrf(prm_url)
+    """Discover AS metadata for an OAuth-protected MCP server.
 
+    Discovery order (MCP spec + RFC 9728):
+    1. Make an unauthenticated request to the resource URL and parse the
+       `resource_metadata` field from the `WWW-Authenticate: Bearer` header
+       on the 401 response.  This is the most reliable source.
+    2. If the header is absent, construct the PRM URL per RFC 9728 §3:
+         {scheme}://{host}/.well-known/oauth-protected-resource{path}
+    3. Fetch the PRM document, walk the `authorization_servers` list, and
+       fetch the AS metadata from the standard well-known endpoints.
+    """
+    prm_url: str | None = None
+
+    # Step 1 — probe the resource endpoint and read WWW-Authenticate.
+    try:
+        _reject_ssrf(proxy_pass_url)
+        async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+            probe = await client.post(proxy_pass_url, content=b"{}")
+        if probe.status_code == 401:
+            www_auth = probe.headers.get("www-authenticate", "")
+            prm_url = _parse_resource_metadata(www_auth)
+            if prm_url:
+                logger.debug("OAuth discovery: resource_metadata from WWW-Authenticate: %s", prm_url)
+    except Exception as exc:
+        logger.debug("OAuth discovery probe failed for %s: %s", proxy_pass_url, exc)
+
+    # Step 2 — fall back to RFC 9728 URL construction.
+    if not prm_url:
+        parsed = urllib.parse.urlparse(proxy_pass_url.rstrip("/"))
+        resource_path = parsed.path  # e.g. "/mcp"
+        prm_url = f"{parsed.scheme}://{parsed.netloc}/.well-known/oauth-protected-resource{resource_path}"
+        logger.debug("OAuth discovery: using RFC 9728 constructed PRM URL: %s", prm_url)
+
+    # Step 3 — fetch PRM and walk to AS metadata.
+    _reject_ssrf(prm_url)
     async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
         prm_resp = await client.get(prm_url)
         prm_resp.raise_for_status()
@@ -62,11 +92,11 @@ async def discover_as_metadata(proxy_pass_url: str) -> dict[str, Any]:
         raise ValueError(f"No authorization_servers in PRM from {prm_url}")
 
     as_issuer = as_urls[0].rstrip("/")
-    for path in (
+    for well_known_path in (
         "/.well-known/oauth-authorization-server",
         "/.well-known/openid-configuration",
     ):
-        as_meta_url = f"{as_issuer}{path}"
+        as_meta_url = f"{as_issuer}{well_known_path}"
         try:
             _reject_ssrf(as_meta_url)
             async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
@@ -77,6 +107,19 @@ async def discover_as_metadata(proxy_pass_url: str) -> dict[str, Any]:
             logger.debug("AS metadata fetch from %s failed: %s", as_meta_url, exc)
 
     raise ValueError(f"Could not fetch AS metadata from {as_issuer}")
+
+
+def _parse_resource_metadata(www_authenticate: str) -> str | None:
+    """Extract resource_metadata URL from a WWW-Authenticate: Bearer header.
+
+    Header format (RFC 6750 / MCP spec):
+      Bearer error="...", resource_metadata="https://..."
+    """
+    if not www_authenticate.lower().startswith("bearer"):
+        return None
+    import re
+    match = re.search(r'resource_metadata\s*=\s*"([^"]+)"', www_authenticate, re.IGNORECASE)
+    return match.group(1) if match else None
 
 
 async def register_dcr_client(
