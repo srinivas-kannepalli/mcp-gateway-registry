@@ -2,7 +2,7 @@
   "server_name": "AI Registry tools",
   "description": "Provides tools to discover and list servers, agents, and skills in the AI Registry. Includes intelligent tool finder which uses semantic search to discover the most relevant tools across all registered services.",
   "path": "/airegistry-tools/",
-  "proxy_pass_url": "http://mcpgw-server:8003/",
+  "proxy_pass_url": "http://mcpgw-server:8000/",
   "supported_transports": ["streamable-http"],
   "auth_scheme": "none",
   "tags": ["registry", "discovery", "search", "semantic-search", "tool-finder", "servers", "agents", "skills"],
