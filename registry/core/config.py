@@ -693,6 +693,10 @@ class Settings(BaseSettings):
         default=False,
         description="Disable auto-registration of the built-in airegistry-tools server on startup. Set DISABLE_AI_REGISTRY_TOOLS_SERVER=true to opt out.",
     )
+    mcpgw_server_url: str = Field(
+        default="http://mcpgw-server:8000/",
+        description="Base URL of the internal mcpgw MCP server used by the built-in AI Registry Tools server. Set MCPGW_SERVER_URL to override (e.g. in local dev or if the port changes).",
+    )
 
     # Tool-level access enforcement (Issue #1026)
     mcp_tools_list_filter_enabled: bool = Field(

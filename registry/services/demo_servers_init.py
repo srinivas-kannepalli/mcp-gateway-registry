@@ -63,6 +63,12 @@ async def initialize_airegistry_server() -> bool:
         # Load configuration from file
         config = _load_server_config("cli/examples/airegistry.json")
 
+        # Override proxy_pass_url from settings so the port/host is never hardcoded
+        # in the static JSON file.  MCPGW_SERVER_URL env var takes precedence.
+        from registry.core.config import settings
+
+        config["proxy_pass_url"] = settings.mcpgw_server_url
+
         # Get server repository (works with any backend: DocumentDB, MongoDB, or file)
         from registry.repositories.factory import get_server_repository
 
