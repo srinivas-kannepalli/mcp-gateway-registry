@@ -60,6 +60,7 @@ class ServerOAuthClientRepository(ServerOAuthClientRepositoryBase):
         token_endpoint: str,
         authorization_endpoint: str,
         scopes_supported: list[str],
+        token_endpoint_auth_method: str = "none",
         via_dcr: bool = False,
         registration_access_token: str | None = None,
     ) -> None:
@@ -67,6 +68,7 @@ class ServerOAuthClientRepository(ServerOAuthClientRepositoryBase):
         doc = {
             "server_path": server_path,
             "client_id": client_id,
+            "token_endpoint_auth_method": token_endpoint_auth_method,
             "client_secret_encrypted": _encrypt(client_secret),
             "registration_access_token_encrypted": _encrypt(registration_access_token),
             "token_endpoint": token_endpoint,

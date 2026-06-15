@@ -22,6 +22,7 @@ from registry.repositories.factory import (
     get_user_server_token_repository,
 )
 from registry.repositories.documentdb.server_oauth_client_repository import _decrypt as _decrypt_client_secret
+from registry.schemas.server_oauth_client_models import ServerOAuthClient
 from registry.schemas.user_server_token_models import UserServerTokenCreate, UserServerTokenStatus
 from registry.services.downstream_oauth_service import resolve_client_for_server
 from registry.services.server_service import server_service
@@ -42,6 +43,63 @@ def _generate_pkce() -> tuple[str, str]:
     digest = hashlib.sha256(verifier.encode()).digest()
     challenge = base64.urlsafe_b64encode(digest).rstrip(b"=").decode()
     return verifier, challenge
+
+
+def _build_token_exchange_request(
+    oauth_client: ServerOAuthClient,
+    code: str,
+    redirect_uri: str,
+    code_verifier: str,
+    resource_indicator: str,
+) -> tuple[dict[str, Any], dict[str, str]]:
+    """Build token exchange data and headers for the configured client auth method.
+
+    Supported methods:
+    - ``none``: PKCE only, no client credentials
+    - ``client_secret_basic``: Basic auth header
+    - ``client_secret_post``: client credentials in the form body
+
+    Raises:
+        ValueError: If the auth method is unsupported or required credentials are missing.
+    """
+    token_endpoint_auth_method = oauth_client.token_endpoint_auth_method or "none"
+    data: dict[str, Any] = {
+        "grant_type": "authorization_code",
+        "code": code,
+        "redirect_uri": redirect_uri,
+        "code_verifier": code_verifier,
+        "resource": resource_indicator,
+    }
+    headers: dict[str, str] = {}
+
+    if token_endpoint_auth_method == "none":
+        data["client_id"] = oauth_client.client_id
+        return data, headers
+
+    client_secret = _decrypt_client_secret(oauth_client.client_secret_encrypted)
+    if not client_secret:
+        raise ValueError(
+            f"Missing client_secret for token endpoint auth method {token_endpoint_auth_method}",
+        )
+
+    if token_endpoint_auth_method == "client_secret_basic":
+        credentials = base64.b64encode(
+            f"{oauth_client.client_id}:{client_secret}".encode(),
+        ).decode()
+        headers["Authorization"] = f"Basic {credentials}"
+        return data, headers
+
+    if token_endpoint_auth_method == "client_secret_post":
+        data["client_id"] = oauth_client.client_id
+        data["client_secret"] = client_secret
+        return data, headers
+
+    if token_endpoint_auth_method in {"private_key_jwt", "client_secret_jwt"}:
+        raise ValueError(
+            f"Unsupported token endpoint auth method: {token_endpoint_auth_method}",
+        )
+
+    raise ValueError(f"Unknown token endpoint auth method: {token_endpoint_auth_method}")
 
 
 def _normalize_path(path: str) -> str:
@@ -175,21 +233,19 @@ async def downstream_callback(
         raise HTTPException(status_code=500, detail="OAuth client config missing")
 
     gateway_base_url = str(request.base_url).rstrip("/")
-    client_secret = _decrypt_client_secret(oauth_client.client_secret_encrypted)
-    token_payload: dict[str, Any] = {
-        "grant_type": "authorization_code",
-        "code": code,
-        "redirect_uri": (
-            f"{gateway_base_url}/api/servers/{normalized_path.lstrip('/')}/downstream/callback"
-        ),
-        "client_id": oauth_client.client_id,
-        "code_verifier": state_data["code_verifier"],
-        "resource": _get_resource_indicator(server),
-    }
-    token_headers: dict[str, str] = {}
-    if client_secret:
-        creds = base64.b64encode(f"{oauth_client.client_id}:{client_secret}".encode()).decode()
-        token_headers["Authorization"] = f"Basic {creds}"
+    redirect_uri = (
+        f"{gateway_base_url}/api/servers/{normalized_path.lstrip('/')}/downstream/callback"
+    )
+    try:
+        token_payload, token_headers = _build_token_exchange_request(
+            oauth_client=oauth_client,
+            code=code,
+            redirect_uri=redirect_uri,
+            code_verifier=state_data["code_verifier"],
+            resource_indicator=_get_resource_indicator(server),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
     async with httpx.AsyncClient(timeout=10.0) as client:
         resp = await client.post(

@@ -12,6 +12,10 @@ class ServerOAuthClient(BaseModel):
 
     server_path: str = Field(..., description="Server path key.")
     client_id: str = Field(..., description="OAuth client_id.")
+    token_endpoint_auth_method: str = Field(
+        default="none",
+        description="Token endpoint client authentication method.",
+    )
     client_secret_encrypted: str | None = Field(
         default=None,
         description="Fernet-encrypted client_secret.",
