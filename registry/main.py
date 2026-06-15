@@ -1069,8 +1069,8 @@ if settings.audit_log_enabled:
 # Register API routers with /api prefix
 app.include_router(system_router, tags=["System"])  # /api/version, /api/stats
 app.include_router(auth_router, prefix="/api/auth", tags=["Authentication"])
-app.include_router(servers_router, prefix="/api", tags=["Server Management"])
 app.include_router(downstream_oauth_router, prefix="/api", tags=["downstream-oauth"])
+app.include_router(servers_router, prefix="/api", tags=["Server Management"])
 app.include_router(ans_router, prefix="/api", tags=["ANS Integration"])
 app.include_router(agent_router, prefix="/api", tags=["Agent Management"])
 app.include_router(management_router, prefix="/api")
