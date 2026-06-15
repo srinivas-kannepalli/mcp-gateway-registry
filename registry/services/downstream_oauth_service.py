@@ -122,27 +122,53 @@ def _parse_resource_metadata(www_authenticate: str) -> str | None:
     return match.group(1) if match else None
 
 
+_PREFERRED_AUTH_METHODS = ("client_secret_basic", "client_secret_post", "none")
+
+
+def _select_token_auth_method(advertised: list[str]) -> str:
+    """Pick the best token_endpoint_auth_method from the AS-advertised list.
+
+    Preference order: client_secret_basic > client_secret_post > none.
+    Falls back to ``none`` (public client / PKCE) if nothing matches.
+    """
+    for method in _PREFERRED_AUTH_METHODS:
+        if method in advertised:
+            return method
+    return "none"
+
+
 async def register_dcr_client(
     registration_endpoint: str,
     gateway_base_url: str,
     server_path: str,
     scopes: list[str],
+    token_auth_methods_supported: list[str] | None = None,
 ) -> dict[str, Any]:
-    """Perform RFC 7591 Dynamic Client Registration."""
+    """Perform RFC 7591 Dynamic Client Registration.
+
+    Selects ``token_endpoint_auth_method`` from the AS-advertised list so the
+    request is always compatible with what the server supports.
+    """
     _reject_ssrf(registration_endpoint)
+    auth_method = _select_token_auth_method(token_auth_methods_supported or [])
     redirect_uri = f"{gateway_base_url.rstrip('/')}/api/servers/{server_path}/downstream/callback"
-    payload = {
-        "client_name": f"MCP Gateway — {server_path}",
+    payload: dict[str, Any] = {
+        "client_name": f"MCP Gateway - {server_path}",
         "redirect_uris": [redirect_uri],
         "grant_types": ["authorization_code", "refresh_token"],
         "response_types": ["code"],
-        "token_endpoint_auth_method": "client_secret_basic",
-        "scope": " ".join(scopes) if scopes else "",
+        "token_endpoint_auth_method": auth_method,
     }
+    if scopes:
+        payload["scope"] = " ".join(scopes)
+
+    logger.info("DCR for %s using token_endpoint_auth_method=%s", server_path, auth_method)
     async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
         resp = await client.post(registration_endpoint, json=payload)
         resp.raise_for_status()
-        return resp.json()
+        result = resp.json()
+        result["_selected_auth_method"] = auth_method
+        return result
 
 
 async def resolve_client_for_server(
@@ -168,6 +194,11 @@ async def resolve_client_for_server(
         token_url = token_url or as_meta.get("token_endpoint")
         scopes_supported = as_meta.get("scopes_supported", scopes_supported)
         registration_endpoint = as_meta.get("registration_endpoint")
+        token_auth_methods_supported: list[str] = as_meta.get(
+            "token_endpoint_auth_methods_supported", []
+        )
+    else:
+        token_auth_methods_supported = []
 
     if not auth_url or not token_url:
         raise ValueError(f"Could not resolve auth/token endpoints for {server_path}")
@@ -185,12 +216,21 @@ async def resolve_client_for_server(
             gateway_base_url,
             server_path,
             scopes,
+            token_auth_methods_supported,
         )
         client_id = dcr_result["client_id"]
-        client_secret = dcr_result.get("client_secret")
+        # For public clients (method=none), the secret must not be used in
+        # token exchange — PKCE provides the proof of possession instead.
+        selected_method = dcr_result.get("_selected_auth_method", "client_secret_basic")
+        client_secret = None if selected_method == "none" else dcr_result.get("client_secret")
         registration_access_token = dcr_result.get("registration_access_token")
         via_dcr = True
-        logger.info("DCR completed for server %s, client_id=%s", server_path, client_id)
+        logger.info(
+            "DCR completed for server %s, client_id=%s, auth_method=%s",
+            server_path,
+            client_id,
+            selected_method,
+        )
 
     if not client_id:
         raise ValueError(f"No client_id available for server {server_path}")
