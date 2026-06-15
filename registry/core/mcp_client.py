@@ -167,16 +167,21 @@ async def _refresh_downstream_access_token(
 
     client_secret = _decrypt_oauth_secret(oauth_client.client_secret_encrypted)
     resource = downstream_oauth.get("resource_indicator") or server_info.get("proxy_pass_url", "")
-    payload = {
+    auth_method = getattr(oauth_client, "token_endpoint_auth_method", "none") or "none"
+
+    payload: dict[str, str] = {
         "grant_type": "refresh_token",
         "refresh_token": refresh_value,
         "client_id": oauth_client.client_id,
         "resource": resource,
     }
     request_headers: dict[str, str] = {}
-    if client_secret:
+
+    if auth_method == "client_secret_basic" and client_secret:
         creds = base64.b64encode(f"{oauth_client.client_id}:{client_secret}".encode()).decode()
         request_headers["Authorization"] = f"Basic {creds}"
+    elif auth_method == "client_secret_post" and client_secret:
+        payload["client_secret"] = client_secret
 
     async with httpx.AsyncClient(timeout=10.0) as client:
         resp = await client.post(

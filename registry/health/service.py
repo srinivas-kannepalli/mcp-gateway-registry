@@ -1069,7 +1069,9 @@ class HealthMonitoringService:
         # All other status codes (404, 500, etc.) are considered unhealthy
         return False
 
-    async def _update_tools_background(self, service_path: str, proxy_pass_url: str):
+    async def _update_tools_background(
+        self, service_path: str, proxy_pass_url: str, username: str | None = None
+    ):
         """Update tool list in the background without blocking health checks."""
         try:
             logger.info(f"Starting background tool update for {service_path}")
@@ -1085,11 +1087,25 @@ class HealthMonitoringService:
             server_info = await server_service.get_server_info(
                 service_path, include_credentials=True
             )
+
+            # For downstream OAuth servers, skip tool fetch when no user context is available.
+            # The health background task has no per-user identity, so it cannot present a
+            # valid downstream Bearer token.  The cached tool list (if any) is preserved.
+            downstream_auth_type = (
+                (server_info or {}).get("downstream_oauth", {}).get("downstream_auth_type")
+            )
+            if downstream_auth_type == "oauth2" and not username:
+                logger.info(
+                    f"Skipping background tool fetch for downstream OAuth server {service_path}: "
+                    "no user context available"
+                )
+                return
+
             logger.info(f"Fetching tools from {proxy_pass_url} for {service_path}")
 
             # Use the new connection result function to get both tools and server info
             connection_result = await mcp_client_service.get_mcp_connection_result(
-                proxy_pass_url, server_info
+                proxy_pass_url, server_info, username
             )
 
             tool_list = connection_result.get("tools") if connection_result else None
@@ -1193,7 +1209,7 @@ class HealthMonitoringService:
         return data
 
     async def perform_immediate_health_check(
-        self, service_path: str
+        self, service_path: str, username: str | None = None
     ) -> tuple[str, datetime | None]:
         """Perform an immediate health check for a single service."""
         import httpx
@@ -1257,7 +1273,7 @@ class HealthMonitoringService:
                             f"DEBUG: Status detail matches HealthStatus.HEALTHY, triggering background tool update for {service_path}"
                         )
                         asyncio.create_task(
-                            self._update_tools_background(service_path, proxy_pass_url)
+                            self._update_tools_background(service_path, proxy_pass_url, username)
                         )
                     elif status_detail == HealthStatus.HEALTHY_AUTH_EXPIRED:
                         logger.warning(

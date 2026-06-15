@@ -2783,7 +2783,7 @@ async def refresh_service(service_path: str, user_context: Annotated[dict, Depen
         # Perform immediate health check. Use health_status to avoid shadowing
         # fastapi.status (imported at module level).
         health_status, last_checked_dt = await health_service.perform_immediate_health_check(
-            service_path
+            service_path, username=user_context.get("username")
         )
         last_checked_iso = last_checked_dt.isoformat() if last_checked_dt else None
         logger.info(
