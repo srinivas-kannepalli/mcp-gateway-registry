@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import base64
-import hashlib
 import logging
 import secrets
 from datetime import UTC, datetime, timedelta
@@ -13,6 +12,8 @@ from urllib.parse import urlencode
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import HTMLResponse, RedirectResponse
+from mcp.client.auth import PKCEParameters
+from mcp.client.auth.utils import get_client_metadata_scopes
 
 from registry.auth.dependencies import enhanced_auth
 from registry.repositories.factory import (
@@ -35,14 +36,6 @@ _token_repo = get_user_server_token_repository()
 _client_repo = get_server_oauth_client_repository()
 _consent_repo = get_downstream_consent_repository()
 _state_repo = get_downstream_oauth_state_repository()
-
-
-def _generate_pkce() -> tuple[str, str]:
-    """Return (code_verifier, code_challenge)."""
-    verifier = base64.urlsafe_b64encode(secrets.token_bytes(64)).rstrip(b"=").decode()
-    digest = hashlib.sha256(verifier.encode()).digest()
-    challenge = base64.urlsafe_b64encode(digest).rstrip(b"=").decode()
-    return verifier, challenge
 
 
 def _build_token_exchange_request(
@@ -175,19 +168,37 @@ async def downstream_authorize(
             detail="Could not reach the upstream OAuth server. Check the server URL.",
         ) from exc
 
-    code_verifier, code_challenge = _generate_pkce()
+    pkce = PKCEParameters.generate()
     state = secrets.token_urlsafe(32)
     await _state_repo.save(
         state,
         {
             "username": username,
             "server_path": normalized_path,
-            "code_verifier": code_verifier,
+            "code_verifier": pkce.code_verifier,
         },
     )
 
-    scopes = downstream_oauth.get("scopes", [])
-    await _consent_repo.record_consent(username, normalized_path, scopes)
+    # Scope selection per MCP spec (§2.3.2):
+    # 1. User-configured scopes (explicit intent)
+    # 2. AS-advertised scopes_supported stored from discovery
+    # 3. Omit scope parameter (let AS assign defaults)
+    configured_scopes: list[str] = downstream_oauth.get("scopes") or []
+    scope_str: str | None
+    if configured_scopes:
+        scope_str = " ".join(configured_scopes)
+    else:
+        # get_client_metadata_scopes selects per MCP spec priority; pass stored
+        # scopes_supported as the AS metadata equivalent (no live re-fetch needed)
+        scope_str = get_client_metadata_scopes(
+            www_authenticate_scope=None,
+            protected_resource_metadata=None,
+            authorization_server_metadata=None,
+        )
+        if not scope_str and oauth_client.scopes_supported:
+            scope_str = " ".join(oauth_client.scopes_supported)
+
+    await _consent_repo.record_consent(username, normalized_path, configured_scopes)
 
     params: dict[str, str] = {
         "response_type": "code",
@@ -196,13 +207,11 @@ async def downstream_authorize(
             f"{gateway_base_url}/api/servers/{normalized_path.lstrip('/')}/downstream/callback"
         ),
         "state": state,
-        "code_challenge": code_challenge,
+        "code_challenge": pkce.code_challenge,
         "code_challenge_method": "S256",
     }
-    # Only include scope when non-empty — sending scope="" causes providers like
-    # Miro to reject the request with invalid_scope.
-    if scopes:
-        params["scope"] = " ".join(scopes)
+    if scope_str:
+        params["scope"] = scope_str
     resource = _get_resource_indicator(server)
     if resource:
         params["resource"] = resource

@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import json
 from unittest.mock import AsyncMock, patch
 
 import httpx
 import pytest
+from mcp.client.auth.utils import extract_resource_metadata_from_www_auth
 from mcp.shared.auth import OAuthClientInformationFull, OAuthMetadata, ProtectedResourceMetadata
 from pydantic import ValidationError
 
@@ -13,7 +15,6 @@ from registry.schemas.server_oauth_client_models import ServerOAuthClient
 from registry.services.downstream_oauth_service import (
     _discover_as_metadata,
     _discover_protected_resource_metadata,
-    _parse_resource_metadata_url,
     _reject_ssrf,
     _select_token_auth_method,
     discover_as_metadata,
@@ -90,33 +91,32 @@ class TestRejectSsrf:
 
 
 class TestParseResourceMetadataUrl:
-    """Tests for parsing resource metadata URLs from WWW-Authenticate headers."""
+    """WWW-Authenticate header parsing is now delegated to the MCP SDK.
 
-    def test_extracts_url_from_bearer_header(self) -> None:
-        header = 'Bearer resource_metadata="https://resource.example.com/.well-known/oauth"'
+    These tests verify the SDK's ``extract_resource_metadata_from_www_auth``
+    works correctly via a real httpx.Response so we catch any SDK API changes.
+    """
 
-        result = _parse_resource_metadata_url(header)
-
-        assert result == "https://resource.example.com/.well-known/oauth"
-
-    def test_returns_none_for_non_bearer_scheme(self) -> None:
-        result = _parse_resource_metadata_url(
-            'Basic resource_metadata="https://resource.example.com/.well-known/oauth"',
+    def _make_response(self, www_authenticate: str) -> httpx.Response:
+        request = httpx.Request("POST", "https://resource.example.com/mcp")
+        return httpx.Response(
+            status_code=401,
+            headers={"WWW-Authenticate": www_authenticate},
+            request=request,
         )
 
-        assert result is None
+    def test_extracts_url_from_bearer_header(self) -> None:
+        response = self._make_response(
+            'Bearer resource_metadata="https://resource.example.com/.well-known/oauth"'
+        )
+        assert (
+            extract_resource_metadata_from_www_auth(response)
+            == "https://resource.example.com/.well-known/oauth"
+        )
 
     def test_returns_none_when_resource_metadata_absent(self) -> None:
-        result = _parse_resource_metadata_url('Bearer error="invalid_token"')
-
-        assert result is None
-
-    def test_case_insensitive_matching(self) -> None:
-        header = 'bEaReR ReSoUrCe_MeTaDaTa="https://resource.example.com/prm"'
-
-        result = _parse_resource_metadata_url(header)
-
-        assert result == "https://resource.example.com/prm"
+        response = self._make_response('Bearer error="invalid_token"')
+        assert extract_resource_metadata_from_www_auth(response) is None
 
 
 class TestSelectTokenAuthMethod:
@@ -248,7 +248,7 @@ class TestDiscoverProtectedResourceMetadata:
         )
         mock_httpx_client.get.return_value = failing_response
 
-        with pytest.raises(httpx.HTTPStatusError):
+        with pytest.raises(ValueError, match="Could not discover protected-resource metadata"):
             await _discover_protected_resource_metadata("https://resource.example.com/mcp")
 
 
@@ -412,16 +412,25 @@ class TestDiscoverAsMetadataFull:
             url="https://resource.example.com/custom-prm",
         )
 
-        with pytest.raises(ValueError, match="No authorization_servers"):
+        with pytest.raises(ValueError, match="Could not discover protected-resource metadata"):
             await discover_as_metadata("https://resource.example.com/mcp")
 
 
 class TestRegisterDcrClient:
     """Tests for dynamic client registration."""
 
+    def _dcr_response(self, payload: dict) -> httpx.Response:
+        """Build a mock DCR response via client.send()."""
+        request = httpx.Request("POST", "https://auth.example.com/register")
+        return httpx.Response(status_code=201, json=payload, request=request)
+
+    def _sent_payload(self, mock_httpx_client: AsyncMock) -> dict:
+        """Extract the JSON body from the request passed to client.send()."""
+        sent_request: httpx.Request = mock_httpx_client.send.call_args.args[0]
+        return json.loads(sent_request.content)
+
     async def test_selects_auth_method_from_as_metadata(self, mock_httpx_client: AsyncMock) -> None:
-        mock_httpx_client.post.return_value = _response(
-            201,
+        mock_httpx_client.send.return_value = self._dcr_response(
             {
                 "client_id": "client-123",
                 "client_secret": "secret-123",
@@ -429,9 +438,7 @@ class TestRegisterDcrClient:
                     "https://gateway.example.com/api/servers/jira/downstream/callback",
                 ],
                 "token_endpoint_auth_method": "client_secret_basic",
-            },
-            method="POST",
-            url="https://auth.example.com/register",
+            }
         )
 
         await register_dcr_client(
@@ -444,12 +451,11 @@ class TestRegisterDcrClient:
             scopes=["read"],
         )
 
-        payload = mock_httpx_client.post.await_args.kwargs["json"]
+        payload = self._sent_payload(mock_httpx_client)
         assert payload["token_endpoint_auth_method"] == "client_secret_basic"
 
     async def test_builds_correct_payload_with_scopes(self, mock_httpx_client: AsyncMock) -> None:
-        mock_httpx_client.post.return_value = _response(
-            201,
+        mock_httpx_client.send.return_value = self._dcr_response(
             {
                 "client_id": "client-123",
                 "client_secret": "secret-123",
@@ -457,9 +463,7 @@ class TestRegisterDcrClient:
                     "https://gateway.example.com/api/servers/jira/downstream/callback",
                 ],
                 "token_endpoint_auth_method": "client_secret_basic",
-            },
-            method="POST",
-            url="https://auth.example.com/register",
+            }
         )
 
         await register_dcr_client(
@@ -469,15 +473,14 @@ class TestRegisterDcrClient:
             scopes=["read", "write"],
         )
 
-        payload = mock_httpx_client.post.await_args.kwargs["json"]
+        payload = self._sent_payload(mock_httpx_client)
         assert payload["scope"] == "read write"
         assert payload["redirect_uris"] == [
             "https://gateway.example.com/api/servers/jira/downstream/callback",
         ]
 
     async def test_builds_correct_payload_without_scopes(self, mock_httpx_client: AsyncMock) -> None:
-        mock_httpx_client.post.return_value = _response(
-            201,
+        mock_httpx_client.send.return_value = self._dcr_response(
             {
                 "client_id": "client-123",
                 "client_secret": "secret-123",
@@ -485,9 +488,7 @@ class TestRegisterDcrClient:
                     "https://gateway.example.com/api/servers/jira/downstream/callback",
                 ],
                 "token_endpoint_auth_method": "client_secret_basic",
-            },
-            method="POST",
-            url="https://auth.example.com/register",
+            }
         )
 
         await register_dcr_client(
@@ -497,15 +498,14 @@ class TestRegisterDcrClient:
             scopes=[],
         )
 
-        payload = mock_httpx_client.post.await_args.kwargs["json"]
+        payload = self._sent_payload(mock_httpx_client)
         assert "scope" not in payload
 
     async def test_returns_validated_client_information(
         self,
         mock_httpx_client: AsyncMock,
     ) -> None:
-        mock_httpx_client.post.return_value = _response(
-            201,
+        mock_httpx_client.send.return_value = self._dcr_response(
             {
                 "client_id": "client-123",
                 "client_secret": "secret-123",
@@ -513,9 +513,7 @@ class TestRegisterDcrClient:
                     "https://gateway.example.com/api/servers/jira/downstream/callback",
                 ],
                 "token_endpoint_auth_method": "client_secret_post",
-            },
-            method="POST",
-            url="https://auth.example.com/register",
+            }
         )
 
         result = await register_dcr_client(
@@ -538,11 +536,11 @@ class TestRegisterDcrClient:
             )
 
     async def test_raises_on_dcr_http_error(self, mock_httpx_client: AsyncMock) -> None:
-        mock_httpx_client.post.return_value = _response(
-            400,
-            {"error": "invalid_client_metadata"},
-            method="POST",
-            url="https://auth.example.com/register",
+        request = httpx.Request("POST", "https://auth.example.com/register")
+        mock_httpx_client.send.return_value = httpx.Response(
+            status_code=400,
+            json={"error": "invalid_client_metadata"},
+            request=request,
         )
 
         with pytest.raises(httpx.HTTPStatusError):

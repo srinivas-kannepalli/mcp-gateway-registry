@@ -4,11 +4,18 @@ from __future__ import annotations
 
 import ipaddress
 import logging
-import re
 import urllib.parse
 from typing import Any
 
 import httpx
+from mcp.client.auth.utils import (
+    build_oauth_authorization_server_metadata_discovery_urls,
+    build_protected_resource_metadata_discovery_urls,
+    create_client_registration_request,
+    extract_resource_metadata_from_www_auth,
+    handle_auth_metadata_response,
+    handle_protected_resource_response,
+)
 from mcp.shared.auth import (
     OAuthClientInformationFull,
     OAuthClientMetadata,
@@ -29,10 +36,6 @@ _PREFERRED_AUTH_METHODS: tuple[str, ...] = (
     "client_secret_basic",
     "client_secret_post",
     "none",
-)
-_WELL_KNOWN_AS_PATHS: tuple[str, ...] = (
-    "/.well-known/oauth-authorization-server",
-    "/.well-known/openid-configuration",
 )
 
 
@@ -67,19 +70,6 @@ def _reject_ssrf(url: str) -> None:
         raise ValueError(f"SSRF protection: private/loopback host rejected: {host}")
 
 
-def _parse_resource_metadata_url(www_authenticate: str) -> str | None:
-    """Extract resource_metadata URL from WWW-Authenticate: Bearer header."""
-    if not www_authenticate.lower().startswith("bearer"):
-        return None
-
-    match = re.search(
-        r'resource_metadata\s*=\s*"([^"]+)"',
-        www_authenticate,
-        re.IGNORECASE,
-    )
-    return match.group(1) if match else None
-
-
 def _select_token_auth_method(advertised: list[str]) -> str:
     """Pick the preferred token endpoint auth method from AS metadata."""
     for method in _PREFERRED_AUTH_METHODS:
@@ -88,28 +78,12 @@ def _select_token_auth_method(advertised: list[str]) -> str:
     return "none"
 
 
-def _build_rfc9728_prm_url(resource_url: str) -> str:
-    """Construct the RFC 9728 protected-resource metadata URL."""
-    parsed = urllib.parse.urlparse(resource_url.rstrip("/"))
-    return (
-        f"{parsed.scheme}://{parsed.netloc}"
-        f"/.well-known/oauth-protected-resource{parsed.path}"
-    )
-
-
-async def _fetch_json(
-    client: httpx.AsyncClient,
-    url: str,
-) -> dict[str, Any]:
-    """Fetch a JSON document and raise on HTTP failures."""
-    _reject_ssrf(url)
-    response = await client.get(url)
-    response.raise_for_status()
-    return response.json()
-
-
 async def _discover_protected_resource_metadata(resource_url: str) -> ProtectedResourceMetadata:
     """Fetch and validate protected-resource metadata for a downstream server.
+
+    Probes the resource endpoint to find the WWW-Authenticate header, then uses
+    the SDK's ``build_protected_resource_metadata_discovery_urls`` helper to
+    generate ordered candidate URLs (explicit from header → RFC 9728 fallback).
 
     Args:
         resource_url: Downstream protected resource URL.
@@ -118,31 +92,37 @@ async def _discover_protected_resource_metadata(resource_url: str) -> ProtectedR
         Validated protected-resource metadata.
 
     Raises:
-        httpx.HTTPError: If the PRM fetch fails.
-        ValidationError: If the PRM payload is invalid.
+        ValueError: If no valid PRM can be discovered.
     """
     _reject_ssrf(resource_url)
-    prm_url: str | None = None
+    www_auth_url: str | None = None
 
     async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
         try:
             probe = await client.post(resource_url, content=b"{}")
+            if probe.status_code == 401:
+                www_auth_url = extract_resource_metadata_from_www_auth(probe)
         except httpx.HTTPError as exc:
             logger.debug("OAuth discovery probe failed for %s: %s", resource_url, exc)
-        else:
-            if probe.status_code == 401:
-                prm_url = _parse_resource_metadata_url(
-                    probe.headers.get("www-authenticate", ""),
-                )
 
-        resolved_prm_url = prm_url or _build_rfc9728_prm_url(resource_url)
-        prm_payload = await _fetch_json(client, resolved_prm_url)
+        for url in build_protected_resource_metadata_discovery_urls(www_auth_url, resource_url):
+            _reject_ssrf(url)
+            try:
+                response = await client.get(url)
+                metadata = await handle_protected_resource_response(response)
+                if metadata is not None:
+                    return metadata
+            except httpx.HTTPError as exc:
+                logger.debug("PRM fetch failed for %s: %s", url, exc)
 
-    return ProtectedResourceMetadata.model_validate(prm_payload)
+    raise ValueError(f"Could not discover protected-resource metadata for {resource_url}")
 
 
 async def _discover_as_metadata(issuer_url: str) -> OAuthMetadata:
     """Fetch and validate OAuth authorization server metadata.
+
+    Uses the SDK's ``build_oauth_authorization_server_metadata_discovery_urls``
+    to generate ordered candidate URLs (RFC 8414 path-aware, OIDC fallbacks).
 
     Args:
         issuer_url: OAuth issuer base URL.
@@ -153,36 +133,21 @@ async def _discover_as_metadata(issuer_url: str) -> OAuthMetadata:
     Raises:
         ValueError: If no well-known metadata document can be loaded.
     """
-    issuer = issuer_url.rstrip("/")
-
     async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
-        for well_known_path in _WELL_KNOWN_AS_PATHS:
-            metadata_url = f"{issuer}{well_known_path}"
+        for url in build_oauth_authorization_server_metadata_discovery_urls(issuer_url, issuer_url):
             try:
-                _reject_ssrf(metadata_url)
-                response = await client.get(metadata_url)
+                _reject_ssrf(url)
+                response = await client.get(url)
+                should_continue, metadata = await handle_auth_metadata_response(response)
+                if metadata is not None:
+                    logger.info("Discovered AS metadata via %s", url)
+                    return metadata
+                if not should_continue:
+                    break
             except httpx.HTTPError as exc:
-                logger.debug("AS metadata fetch failed for %s: %s", metadata_url, exc)
-                continue
+                logger.debug("AS metadata fetch failed for %s: %s", url, exc)
 
-            if response.status_code != 200:
-                logger.debug(
-                    "AS metadata fetch returned %s for %s",
-                    response.status_code,
-                    metadata_url,
-                )
-                continue
-
-            try:
-                metadata = OAuthMetadata.model_validate(response.json())
-            except ValidationError as exc:
-                logger.debug("AS metadata validation failed for %s: %s", metadata_url, exc)
-                continue
-
-            logger.info("Discovered AS metadata via %s", well_known_path)
-            return metadata
-
-    raise ValueError(f"Could not fetch AS metadata from {issuer}")
+    raise ValueError(f"Could not fetch AS metadata from {issuer_url}")
 
 
 async def discover_as_metadata(proxy_pass_url: str) -> OAuthMetadata:
@@ -217,7 +182,11 @@ async def register_dcr_client(
     server_path: str,
     scopes: list[str],
 ) -> OAuthClientInformationFull:
-    """Register an OAuth client with the downstream authorization server.
+    """Register an OAuth client with the downstream authorization server via DCR.
+
+    Uses the SDK's ``create_client_registration_request`` to build the RFC 7591
+    request, then parses the response manually to preserve the
+    ``registration_access_token`` field (RFC 7592) which the SDK model omits.
 
     Args:
         as_metadata: Validated authorization server metadata.
@@ -226,12 +195,13 @@ async def register_dcr_client(
         scopes: Requested scopes for the downstream server.
 
     Returns:
-        Validated client information returned by DCR.
+        Validated client information returned by DCR, with
+        ``registration_access_token`` set as an attribute when present.
 
     Raises:
         ValueError: If the AS does not expose a registration endpoint.
         httpx.HTTPError: If the DCR request fails.
-        ValidationError: If the DCR payload is invalid.
+        ValidationError: If the DCR response payload is invalid.
     """
     if not as_metadata.registration_endpoint:
         raise ValueError("Authorization server does not expose registration_endpoint")
@@ -243,7 +213,7 @@ async def register_dcr_client(
         f"{gateway_base_url.rstrip('/')}/api/servers/"
         f"{server_path.lstrip('/')}/downstream/callback"
     )
-    metadata = OAuthClientMetadata(
+    client_metadata = OAuthClientMetadata(
         redirect_uris=[redirect_uri],
         token_endpoint_auth_method=auth_method,  # type: ignore[arg-type]
         grant_types=["authorization_code", "refresh_token"],
@@ -251,23 +221,25 @@ async def register_dcr_client(
         client_name=f"MCP Gateway - {server_path}",
         scope=" ".join(scopes) if scopes else None,
     )
-    payload = metadata.model_dump(mode="json", exclude_none=True)
 
-    registration_endpoint = str(as_metadata.registration_endpoint)
-    _reject_ssrf(registration_endpoint)
+    # SDK builds the request with correct serialisation (by_alias, exclude_none)
+    auth_base_url = str(as_metadata.authorization_endpoint).rstrip("/").rsplit("/", 1)[0]
+    request = create_client_registration_request(as_metadata, client_metadata, auth_base_url)
+    _reject_ssrf(str(request.url))
+
     async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
-        response = await client.post(registration_endpoint, json=payload)
+        response = await client.send(request)
         response.raise_for_status()
         response_payload = response.json()
-        client_information = OAuthClientInformationFull.model_validate(response_payload)
-        registration_access_token = response_payload.get("registration_access_token")
-        if registration_access_token is not None:
-            object.__setattr__(
-                client_information,
-                "registration_access_token",
-                registration_access_token,
-            )
-        return client_information
+
+    # Parse via SDK model for field validation, then attach registration_access_token
+    # separately — OAuthClientInformationFull does not declare this RFC 7592 field.
+    client_info = OAuthClientInformationFull.model_validate(response_payload)
+    registration_access_token = response_payload.get("registration_access_token")
+    if registration_access_token is not None:
+        object.__setattr__(client_info, "registration_access_token", registration_access_token)
+
+    return client_info
 
 
 async def resolve_client_for_server(
