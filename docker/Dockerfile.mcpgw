@@ -6,7 +6,7 @@
 #
 # If Dockerfile.mcp-server changes structurally, sync those changes here too.
 
-FROM python:3.14-slim
+FROM public.ecr.aws/docker/library/python:3.14-slim
 
 ENV PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \

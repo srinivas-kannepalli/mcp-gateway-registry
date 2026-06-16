@@ -1,5 +1,5 @@
 # Use an official Python runtime as a parent image
-FROM python:3.14-slim
+FROM public.ecr.aws/docker/library/python:3.14-slim
 
 # Set environment variables to prevent interactive prompts during installation
 ENV PYTHONUNBUFFERED=1 \
