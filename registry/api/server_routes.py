@@ -2833,7 +2833,7 @@ async def refresh_service(service_path: str, user_context: Annotated[dict, Depen
 
         if downstream_token:
             import json as _json
-            headers_json = _json.dumps([{"name": "Authorization", "value": f"Bearer {downstream_token}"}])
+            headers_json = _json.dumps({"X-Authorization": f"Bearer {downstream_token}"})
             proxy_pass_url = server_info.get("proxy_pass_url")
             if proxy_pass_url:
                 logger.info(
@@ -5164,7 +5164,7 @@ async def rescan_server(
             )
             # Inject the user's downstream Bearer token as the scan header
             import json as _json
-            headers_json = _json.dumps([{"name": "Authorization", "value": f"Bearer {downstream_token}"}])
+            headers_json = _json.dumps({"X-Authorization": f"Bearer {downstream_token}"})
         else:
             logger.info(
                 f"Skipping manual security scan for {path}: "
