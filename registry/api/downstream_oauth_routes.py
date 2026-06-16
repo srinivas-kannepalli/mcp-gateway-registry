@@ -82,6 +82,9 @@ def _build_token_exchange_request(
             f"{oauth_client.client_id}:{client_secret}".encode(),
         ).decode()
         headers["Authorization"] = f"Basic {credentials}"
+        # Also include client_id in the body — some servers (e.g. Miro) require it
+        # in the request body even when using HTTP Basic authentication.
+        data["client_id"] = oauth_client.client_id
         return data, headers
 
     if token_endpoint_auth_method == "client_secret_post":
