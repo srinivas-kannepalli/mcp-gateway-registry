@@ -2820,15 +2820,43 @@ async def refresh_service(service_path: str, user_context: Annotated[dict, Depen
 
     logger.info(f"Service '{service_path}' refreshed by user '{user_context['username']}'")
 
-    # Downstream OAuth servers can never pass a security scan (no per-user token).
-    # Remove any stale security-pending tag when the user explicitly refreshes.
+    # For downstream OAuth servers: if the user has authorized, kick off a background
+    # security scan with their token so the result closes the security-pending badge.
+    # If they haven't authorized yet, just remove any stale security-pending tag.
     downstream_auth_type = server_info.get("downstream_oauth", {}).get("downstream_auth_type")
     if downstream_auth_type == "oauth2":
-        tags = server_info.get("tags", [])
-        if "security-pending" in tags:
-            server_info["tags"] = [t for t in tags if t != "security-pending"]
-            await server_service.update_server(service_path, server_info)
-            logger.info(f"Removed stale 'security-pending' tag from downstream OAuth server {service_path}")
+        username = user_context.get("username")
+        from ..repositories.factory import get_user_server_token_repository
+
+        token_repo = get_user_server_token_repository()
+        downstream_token = await token_repo.get_access_token(username, service_path) if username else None
+
+        if downstream_token:
+            import json as _json
+            headers_json = _json.dumps([{"name": "Authorization", "value": f"Bearer {downstream_token}"}])
+            proxy_pass_url = server_info.get("proxy_pass_url")
+            if proxy_pass_url:
+                logger.info(
+                    f"Triggering background security scan for downstream OAuth server "
+                    f"{service_path} using token for user '{username}'"
+                )
+                asyncio.create_task(
+                    security_scanner_service.scan_server(
+                        server_url=proxy_pass_url,
+                        server_path=service_path,
+                        headers=headers_json,
+                    )
+                )
+        else:
+            # No token yet — remove stale security-pending tag
+            tags = server_info.get("tags", [])
+            if "security-pending" in tags:
+                server_info["tags"] = [t for t in tags if t != "security-pending"]
+                await server_service.update_server(service_path, server_info)
+                logger.info(
+                    f"Removed stale 'security-pending' tag from {service_path}: "
+                    f"user '{username}' has not authorized yet"
+                )
 
     return {
         "message": f"Service {service_path} refreshed successfully",
@@ -5118,35 +5146,55 @@ async def rescan_server(
             detail=f"Server '{path}' does not have a proxy_pass_url configured",
         )
 
-    # Downstream OAuth servers require per-user tokens that the scanner cannot
-    # obtain. Skip the scan and remove any stale security-pending tag.
+    # Downstream OAuth servers need a per-user Bearer token for the scanner.
+    # If the requesting user has already authorized, inject their token and scan normally.
+    # If not, skip the scan (no token available yet) and clear any stale security-pending tag.
     downstream_auth_type = server_info.get("downstream_oauth", {}).get("downstream_auth_type")
     if downstream_auth_type == "oauth2":
-        logger.info(
-            f"Skipping manual security scan for {path}: downstream OAuth server requires user auth"
-        )
-        tags = server_info.get("tags", [])
-        if "security-pending" in tags:
-            server_info["tags"] = [t for t in tags if t != "security-pending"]
-            await server_service.update_server(path, server_info)
-            logger.info(f"Removed stale 'security-pending' tag from {path}")
-        return {
-            "server_url": server_url,
-            "server_path": path,
-            "scan_timestamp": None,
-            "is_safe": True,
-            "critical_issues": 0,
-            "high_severity": 0,
-            "medium_severity": 0,
-            "low_severity": 0,
-            "analyzers_used": [],
-            "scan_failed": False,
-            "error_message": "Security scan skipped: downstream OAuth server requires per-user authentication",
-            "raw_output": None,
-        }
+        username = user_context.get("username")
+        from ..repositories.factory import get_user_server_token_repository
 
-    # Build auth headers for the scanner if server has stored credentials
-    headers_json = _build_scan_headers_from_credentials(server_info)
+        token_repo = get_user_server_token_repository()
+        downstream_token = await token_repo.get_access_token(username, path) if username else None
+
+        if downstream_token:
+            logger.info(
+                f"Manual security scan for downstream OAuth server {path}: "
+                f"injecting token for user '{username}'"
+            )
+            # Inject the user's downstream Bearer token as the scan header
+            import json as _json
+            headers_json = _json.dumps([{"name": "Authorization", "value": f"Bearer {downstream_token}"}])
+        else:
+            logger.info(
+                f"Skipping manual security scan for {path}: "
+                f"user '{username}' has not yet authorized this downstream OAuth server"
+            )
+            tags = server_info.get("tags", [])
+            if "security-pending" in tags:
+                server_info["tags"] = [t for t in tags if t != "security-pending"]
+                await server_service.update_server(path, server_info)
+                logger.info(f"Removed stale 'security-pending' tag from {path}")
+            return {
+                "server_url": server_url,
+                "server_path": path,
+                "scan_timestamp": None,
+                "is_safe": True,
+                "critical_issues": 0,
+                "high_severity": 0,
+                "medium_severity": 0,
+                "low_severity": 0,
+                "analyzers_used": [],
+                "scan_failed": False,
+                "error_message": (
+                    f"Security scan skipped: user '{username}' has not authorized "
+                    "this downstream OAuth server yet"
+                ),
+                "raw_output": None,
+            }
+    else:
+        # Build auth headers for the scanner if server has stored credentials
+        headers_json = _build_scan_headers_from_credentials(server_info)
 
     logger.info(
         f"Manual security scan requested by user '{user_context.get('username')}' "
