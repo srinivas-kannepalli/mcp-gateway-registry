@@ -734,13 +734,7 @@ async def get_mcp_connection_result(
 
     # Determine the MCP endpoint URL
     explicit_endpoint = server_info.get("mcp_endpoint") if server_info else None
-
-    if explicit_endpoint:
-        mcp_url = explicit_endpoint
-    elif base_url.endswith("/mcp") or "/mcp/" in base_url:
-        mcp_url = base_url
-    else:
-        mcp_url = base_url.rstrip("/") + "/mcp/"
+    mcp_url = explicit_endpoint if explicit_endpoint else base_url
 
     # Handle anthropic-registry servers
     if (
