@@ -176,6 +176,19 @@
                 <input type="text" id="auth_header_name" name="auth_header_name" value="{{ server.auth_header_name | default('X-API-Key') }}" placeholder="X-API-Key">
                 <small style="color: #666;">The HTTP header name used to send the API key (default: X-API-Key)</small>
             </div>
+            <h4 style="margin-top: 24px;">Custom Endpoints</h4>
+            <small style="color: #666; display: block; margin-bottom: 12px;">Override the default /mcp or /sse endpoint paths if your server uses non-standard paths.</small>
+            <div class="form-group">
+                <label for="mcp_endpoint">MCP Endpoint (optional)</label>
+                <input type="url" id="mcp_endpoint" name="mcp_endpoint" value="{{ server.mcp_endpoint | default('') }}" placeholder="http://server.com/custom-mcp-path">
+                <small style="color: #666;">Override default /mcp endpoint path</small>
+            </div>
+            <div class="form-group">
+                <label for="sse_endpoint">SSE Endpoint (optional)</label>
+                <input type="url" id="sse_endpoint" name="sse_endpoint" value="{{ server.sse_endpoint | default('') }}" placeholder="http://server.com/custom-sse-path">
+                <small style="color: #666;">Override default /sse endpoint path</small>
+            </div>
+
             <h4 style="margin-top: 24px;">Additional Headers</h4>
             <small style="color: #666; display: block; margin-bottom: 12px;">Fixed HTTP headers your MCP server requires. Values are encrypted at rest.</small>
             <div id="custom-headers-list">
