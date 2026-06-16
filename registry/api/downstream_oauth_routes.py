@@ -280,24 +280,32 @@ async def downstream_callback(
                 resp.status_code,
                 error_body[:500],
             )
-            # If the AS rejects the client (401/400 invalid_client), the DCR
-            # registration has likely expired. Purge it so the next authorize
-            # attempt triggers fresh DCR.
+            # On 401/400 the DCR client registration has likely expired.
+            # Purge it and redirect back to /authorize so the flow restarts
+            # transparently (fresh DCR + new authorization request).
             if resp.status_code in (400, 401):
                 try:
                     await _client_repo.delete(normalized_path)
                     logger.info(
-                        "Purged stale DCR client for %s after token exchange %s",
+                        "Purged stale DCR client for %s after token exchange %s — redirecting to re-authorize",
                         normalized_path,
                         resp.status_code,
                     )
                 except Exception as purge_exc:
                     logger.warning("Failed to purge DCR client: %s", purge_exc)
+                authorize_url = (
+                    f"/api/servers/{normalized_path.lstrip('/')}/downstream/authorize"
+                )
+                return HTMLResponse(
+                    f"<script>window.location.href = '{authorize_url}';</script>"
+                    f"<p>Redirecting to re-authorize...</p>",
+                    status_code=200,
+                )
             return HTMLResponse(
                 f"<h2>Authorization failed</h2>"
-                f"<p>The authorization server rejected the token exchange "
-                f"(HTTP {resp.status_code}).</p>"
-                f"<p>Please close this window and try authorizing again.</p>"
+                f"<p>The authorization server returned an unexpected error "
+                f"(HTTP {resp.status_code}): {error_body[:200]}</p>"
+                f"<p>Please close this window and try again.</p>"
                 f"<script>window.opener && window.opener.postMessage('oauth_error', '*');</script>",
                 status_code=400,
             )
