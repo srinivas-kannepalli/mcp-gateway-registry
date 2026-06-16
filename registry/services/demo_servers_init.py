@@ -142,6 +142,48 @@ async def initialize_airegistry_server() -> bool:
         return False
 
 
+async def cleanup_downstream_oauth_security_tags() -> None:
+    """Remove stale 'security-pending' tags from downstream OAuth servers.
+
+    Security scans cannot authenticate to downstream OAuth servers, so they
+    always fail and set 'security-pending'.  This tag is now suppressed on
+    registration, but servers registered before that fix still carry it.
+
+    This runs on every startup and idempotently removes the tag from any
+    downstream OAuth server that has it.
+    """
+    from registry.repositories.factory import get_server_repository
+    from registry.services.server_service import server_service
+
+    try:
+        server_repo = get_server_repository()
+        all_servers = await server_service.get_all_servers()
+        cleaned = 0
+
+        for path, server_info in all_servers.items():
+            if isinstance(server_info, dict):
+                info_dict = server_info
+            else:
+                info_dict = server_info.model_dump() if hasattr(server_info, "model_dump") else {}
+
+            downstream_auth_type = info_dict.get("downstream_oauth", {}).get(
+                "downstream_auth_type"
+            )
+            tags = info_dict.get("tags", [])
+
+            if downstream_auth_type == "oauth2" and "security-pending" in tags:
+                tags = [t for t in tags if t != "security-pending"]
+                info_dict["tags"] = tags
+                await server_repo.update(path, info_dict)
+                logger.info(f"Removed stale 'security-pending' tag from downstream OAuth server {path}")
+                cleaned += 1
+
+        if cleaned:
+            logger.info(f"✅ Cleaned 'security-pending' tag from {cleaned} downstream OAuth server(s)")
+    except Exception as e:
+        logger.warning(f"Failed to clean security-pending tags (non-fatal): {e}", exc_info=True)
+
+
 async def initialize_demo_servers() -> None:
     """Initialize all built-in demo servers on registry startup.
 
@@ -155,6 +197,9 @@ async def initialize_demo_servers() -> None:
 
     # Initialize AI Registry Tools
     success = await initialize_airegistry_server()
+
+    # Remove stale security-pending tags from downstream OAuth servers
+    await cleanup_downstream_oauth_security_tags()
 
     if success:
         logger.info("✅ Built-in demo servers initialized successfully")
