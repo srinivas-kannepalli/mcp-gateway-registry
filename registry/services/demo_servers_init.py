@@ -143,41 +143,6 @@ async def initialize_airegistry_server() -> bool:
         return False
 
 
-async def fix_miro_server_transport() -> None:
-    """Fix Miro server's supported_transports to ["sse"].
-
-    Miro's MCP server uses SSE transport at https://mcp.miro.com/sse.
-    If the stored config has supported_transports: ["streamable-http"], the health
-    check appends /mcp (wrong) and nginx regenerates every 5 seconds in a loop.
-    This runs on every startup and idempotently corrects the transport setting.
-    """
-    from registry.repositories.factory import get_server_repository
-    from registry.services.server_service import server_service
-
-    try:
-        all_servers = await server_service.get_all_servers()
-        server_repo = get_server_repository()
-
-        for path, server_info in all_servers.items():
-            if isinstance(server_info, dict):
-                info_dict = server_info
-            else:
-                info_dict = server_info.model_dump() if hasattr(server_info, "model_dump") else {}
-
-            proxy_pass_url = info_dict.get("proxy_pass_url", "")
-            supported_transports = info_dict.get("supported_transports", [])
-
-            if (
-                "mcp.miro.com" in proxy_pass_url
-                and supported_transports != ["sse"]
-            ):
-                info_dict["supported_transports"] = ["sse"]
-                await server_repo.update(path, info_dict)
-                logger.info(f"✅ Fixed Miro server {path}: supported_transports → ['sse']")
-    except Exception as e:
-        logger.warning(f"Failed to fix Miro server transport (non-fatal): {e}", exc_info=True)
-
-
 async def cleanup_downstream_oauth_security_tags() -> None:
     """Remove stale 'security-pending' tags from downstream OAuth servers.
 
@@ -233,9 +198,6 @@ async def initialize_demo_servers() -> None:
 
     # Initialize AI Registry Tools
     success = await initialize_airegistry_server()
-
-    # Fix Miro server transport (must be sse, not streamable-http)
-    await fix_miro_server_transport()
 
     # Remove stale security-pending tags from downstream OAuth servers
     await cleanup_downstream_oauth_security_tags()
