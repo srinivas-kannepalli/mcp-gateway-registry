@@ -340,6 +340,16 @@ async def _perform_security_scan_on_registration(
     if not (scan_config.enabled and scan_config.scan_on_registration):
         return
 
+    # Downstream OAuth servers require per-user tokens that the scanner cannot
+    # obtain. Scanning them without auth always fails and produces misleading
+    # "security-pending" tags.  Skip the scan entirely for these servers.
+    downstream_auth_type = server_entry.get("downstream_oauth", {}).get("downstream_auth_type")
+    if downstream_auth_type == "oauth2":
+        logger.info(
+            f"Skipping security scan for {path}: downstream OAuth server requires user auth"
+        )
+        return
+
     logger.info(f"Running security scan for newly registered server: {path}")
 
     try:

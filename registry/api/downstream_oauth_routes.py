@@ -189,18 +189,23 @@ async def downstream_authorize(
     scopes = downstream_oauth.get("scopes", [])
     await _consent_repo.record_consent(username, normalized_path, scopes)
 
-    params = {
+    params: dict[str, str] = {
         "response_type": "code",
         "client_id": oauth_client.client_id,
         "redirect_uri": (
             f"{gateway_base_url}/api/servers/{normalized_path.lstrip('/')}/downstream/callback"
         ),
-        "scope": " ".join(scopes),
         "state": state,
         "code_challenge": code_challenge,
         "code_challenge_method": "S256",
-        "resource": _get_resource_indicator(server),
     }
+    # Only include scope when non-empty — sending scope="" causes providers like
+    # Miro to reject the request with invalid_scope.
+    if scopes:
+        params["scope"] = " ".join(scopes)
+    resource = _get_resource_indicator(server)
+    if resource:
+        params["resource"] = resource
     redirect_url = f"{oauth_client.authorization_endpoint}?{urlencode(params)}"
     return RedirectResponse(url=redirect_url, status_code=status.HTTP_302_FOUND)
 
