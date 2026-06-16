@@ -61,8 +61,10 @@ def _build_token_exchange_request(
         "code": code,
         "redirect_uri": redirect_uri,
         "code_verifier": code_verifier,
-        "resource": resource_indicator,
     }
+    # Only include resource if non-empty (some providers reject unknown params)
+    if resource_indicator:
+        data["resource"] = resource_indicator
     headers: dict[str, str] = {}
 
     if token_endpoint_auth_method == "none":
@@ -267,7 +269,35 @@ async def downstream_callback(
             data=token_payload,
             headers=token_headers,
         )
-        resp.raise_for_status()
+        if not resp.is_success:
+            error_body = resp.text
+            logger.error(
+                "Token exchange failed for %s: status=%s body=%s",
+                normalized_path,
+                resp.status_code,
+                error_body[:500],
+            )
+            # If the AS rejects the client (401/400 invalid_client), the DCR
+            # registration has likely expired. Purge it so the next authorize
+            # attempt triggers fresh DCR.
+            if resp.status_code in (400, 401):
+                try:
+                    await _client_repo.delete(normalized_path)
+                    logger.info(
+                        "Purged stale DCR client for %s after token exchange %s",
+                        normalized_path,
+                        resp.status_code,
+                    )
+                except Exception as purge_exc:
+                    logger.warning("Failed to purge DCR client: %s", purge_exc)
+            return HTMLResponse(
+                f"<h2>Authorization failed</h2>"
+                f"<p>The authorization server rejected the token exchange "
+                f"(HTTP {resp.status_code}).</p>"
+                f"<p>Please close this window and try authorizing again.</p>"
+                f"<script>window.opener && window.opener.postMessage('oauth_error', '*');</script>",
+                status_code=400,
+            )
         token_data = resp.json()
 
     expires_at = None
