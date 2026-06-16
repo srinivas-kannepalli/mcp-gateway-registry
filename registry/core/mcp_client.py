@@ -732,9 +732,14 @@ async def get_mcp_connection_result(
     # Build headers for the server
     headers = await _build_headers_for_server_async(server_info, username)
 
-    # Determine the MCP endpoint URL
+    # Determine the MCP endpoint URL.
+    # For streamable-http, /mcp is appended to the base URL by convention unless
+    # explicitly overridden via the mcp_endpoint field.
     explicit_endpoint = server_info.get("mcp_endpoint") if server_info else None
-    mcp_url = explicit_endpoint if explicit_endpoint else base_url
+    if explicit_endpoint:
+        mcp_url = explicit_endpoint
+    else:
+        mcp_url = base_url.rstrip("/") + "/mcp"
 
     # Handle anthropic-registry servers
     if (

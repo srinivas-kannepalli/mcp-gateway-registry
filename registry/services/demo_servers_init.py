@@ -67,8 +67,8 @@ async def initialize_airegistry_server() -> bool:
         # in the static JSON file.  MCPGW_SERVER_URL env var takes precedence.
         from registry.core.config import settings
 
-        # Store the full MCP endpoint URL (avoids generic /mcp fallback in health checks)
-        config["proxy_pass_url"] = settings.mcpgw_server_url.rstrip("/") + "/mcp"
+        # Store the base URL; health checker will append /mcp per convention
+        config["proxy_pass_url"] = settings.mcpgw_server_url
 
         # Get server repository (works with any backend: DocumentDB, MongoDB, or file)
         from registry.repositories.factory import get_server_repository

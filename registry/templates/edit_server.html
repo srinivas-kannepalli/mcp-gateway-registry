@@ -97,8 +97,9 @@
                 <textarea id="description" name="description">{{ server.description | default('') }}</textarea>
             </div>
             <div class="form-group">
-                <label for="proxy_pass_url">Proxy Pass URL</label>
-                <input type="url" id="proxy_pass_url" name="proxy_pass_url" value="{{ server.proxy_pass_url | default('') }}" required>
+                <label for="proxy_pass_url">Base URL <span style="color:red;">*</span></label>
+                <input type="url" id="proxy_pass_url" name="proxy_pass_url" value="{{ server.proxy_pass_url | default('') }}" required placeholder="e.g., https://mcp.example.com/">
+                <small style="color: #666;">Root URL of the MCP server. For streamable-http servers, <code>/mcp</code> will be appended automatically unless overridden below.</small>
             </div>
             <div class="form-group">
                 <label for="tags">Tags (comma-separated)</label>

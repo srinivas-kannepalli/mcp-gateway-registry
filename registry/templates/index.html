@@ -1367,12 +1367,12 @@
                 errors.push("'Path (path)' must start with a \"/\".");
             }
             if (typeof jsonData.proxy_pass_url !== 'string' || !jsonData.proxy_pass_url.trim()) {
-                errors.push("'Proxy Pass URL (proxy_pass_url)' is required and must be a non-empty string.");
+                errors.push("'Base URL (proxy_pass_url)' is required and must be a non-empty string.");
             } else {
                 try {
                     new URL(jsonData.proxy_pass_url);
                 } catch (_) {
-                    errors.push("'Proxy Pass URL (proxy_pass_url)' must be a valid URL.");
+                    errors.push("'Base URL (proxy_pass_url)' must be a valid URL.");
                 }
             }
 
@@ -2457,18 +2457,19 @@
                         <input type="text" id="reg-path" name="path" class="form-input" required pattern="^/.*" title="Path must start with /">
                     </div>
                     <div class="form-group">
-                        <label for="reg-proxy-pass-url">Proxy Pass URL <span style="color:red;">*</span> (e.g., http://localhost:8001)</label>
-                        <input type="url" id="reg-proxy-pass-url" name="proxy_pass_url" class="form-input" required>
+                        <label for="reg-proxy-pass-url">Base URL <span style="color:red;">*</span></label>
+                        <input type="url" id="reg-proxy-pass-url" name="proxy_pass_url" class="form-input" required placeholder="e.g., https://mcp.example.com/">
+                        <small style="color: #666;">Root URL of the MCP server. For streamable-http servers, <code>/mcp</code> will be appended automatically unless you override it below.</small>
                     </div>
                     <div class="form-group">
-                        <label for="reg-mcp-endpoint">MCP Endpoint (optional, for custom endpoint paths)</label>
-                        <input type="url" id="reg-mcp-endpoint" name="mcp_endpoint" class="form-input" placeholder="e.g., http://server.com/custom-path">
-                        <small style="color: #666;">If set, health checks will use this URL instead of appending /mcp to the Proxy Pass URL</small>
+                        <label for="reg-mcp-endpoint">MCP Endpoint (optional)</label>
+                        <input type="url" id="reg-mcp-endpoint" name="mcp_endpoint" class="form-input" placeholder="e.g., https://mcp.example.com/custom-path">
+                        <small style="color: #666;">Override the default <code>base_url/mcp</code> path for health checks and tool discovery.</small>
                     </div>
                     <div class="form-group">
-                        <label for="reg-sse-endpoint">SSE Endpoint (optional, for custom SSE paths)</label>
-                        <input type="url" id="reg-sse-endpoint" name="sse_endpoint" class="form-input" placeholder="e.g., http://server.com/events">
-                        <small style="color: #666;">If set, SSE connections will use this URL instead of appending /sse to the Proxy Pass URL</small>
+                        <label for="reg-sse-endpoint">SSE Endpoint (optional)</label>
+                        <input type="url" id="reg-sse-endpoint" name="sse_endpoint" class="form-input" placeholder="e.g., https://mcp.example.com/sse">
+                        <small style="color: #666;">Override the default <code>base_url/sse</code> path for SSE connections.</small>
                     </div>
                     <div class="form-group">
                         <label for="reg-description">Description</label>
@@ -2547,12 +2548,12 @@
                         <textarea id="json-paste-area" class="form-input" rows="15" required placeholder='''{
     "server_name": "My Awesome Service",
     "path": "/my-awesome-service",
-    "proxy_pass_url": "http://localhost:8080",
+    "proxy_pass_url": "https://mcp.example.com/",
     "description": "This is a great service.",
     "tags": ["awesome", "example"],
     "license": "MIT",
-    "mcp_endpoint": "http://localhost:8080/custom-path",
-    "sse_endpoint": "http://localhost:8080/events",
+    "mcp_endpoint": "https://mcp.example.com/custom-mcp-path",
+    "sse_endpoint": "https://mcp.example.com/custom-sse-path",
     "metadata": {
         "team": "platform",
         "owner": "alice@example.com",
@@ -2564,7 +2565,11 @@
     "auth_credential": "your-api-key-here",
     "auth_header_name": "X-API-Key"
 }'''></textarea>
-                        <small style="color: #666;">Note: mcp_endpoint, sse_endpoint, metadata, visibility, allowed_groups, and auth fields are optional.</small>
+                        <small style="color: #666;">
+                            <code>proxy_pass_url</code> is the base URL — <code>/mcp</code> is appended automatically for streamable-http.
+                            Use <code>mcp_endpoint</code> or <code>sse_endpoint</code> to override for non-standard paths.
+                            All fields except <code>server_name</code>, <code>path</code>, and <code>proxy_pass_url</code> are optional.
+                        </small>
                     </div>
                     <button type="submit" class="edit-button">Paste and Register</button>
                 </form>
